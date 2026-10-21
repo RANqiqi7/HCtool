@@ -266,7 +266,8 @@ fun MainScreen() {
                     }
             )
 
-            // 顶部悬浮层：标题框水平居中，搜索按钮靠右；点搜索后输入框从右向左长出来
+            // 顶部悬浮层：左侧标题胶囊、右侧搜索按钮。
+            // 点搜索后长条从按钮左侧往左展开，标题胶囊同步收缩成一个圆球
             BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -282,14 +283,14 @@ fun MainScreen() {
                 val barWidth = maxWidth - actionSize - gap
 
                 // 搜索输入框：右边缘贴着按钮，宽度从 0 长到最大，
-                // 看起来就是从右侧按钮那边往左推开的
+                // 看起来就是从右侧按钮那边往左推开的；左侧要给收缩后的标题球留位置
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         // 给右侧按钮让出位置，宽度从这里往左长
                         .padding(end = actionSize + gap)
-                        .width(barWidth * searchExpand)
-                        .height(56.dp)
+                        .width((barWidth - actionSize - gap) * searchExpand)
+                        .height(actionSize)
                         .graphicsLayer { alpha = searchExpand }
                         .then(
                             if (inPreview) {
@@ -341,13 +342,18 @@ fun MainScreen() {
                     }
                 }
 
-                // 标题框：宽度与底栏相同、左边缘也对齐，看起来就像上下同一条
+                // 标题框：宽度与底栏相同、左边缘也对齐，看起来就像上下同一条；
+                // 展开搜索时向右收窄，最后只剩一个和搜索按钮同大的圆球
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .width(barWidth)
-                        .height(56.dp)
-                        .graphicsLayer { alpha = 1f - searchExpand }
+                        .width(barWidth - (barWidth - actionSize) * searchExpand)
+                        .height(actionSize)
+                        .graphicsLayer {
+                            // 收缩过程中文字会超出球体，按胶囊裁剪，避免压到搜索条上
+                            clip = true
+                            shape = Capsule()
+                        }
                         .then(
                             if (inPreview) {
                                 Modifier.background(color = topBarTint, shape = Capsule())
