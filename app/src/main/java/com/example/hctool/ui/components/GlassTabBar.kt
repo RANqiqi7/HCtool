@@ -3,6 +3,7 @@ package com.example.hctool.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
@@ -106,6 +108,8 @@ fun GlassTabBar(
         val thumbHeight = barHeight - thumbPadding * 2
         // 连续曲率胶囊，比 RoundedCornerShape 更接近 iOS 的圆角过渡
         val barShape = Capsule()
+        // Compose Preview（layoutlib）不支持 RenderEffect，预览里把玻璃退化成纯色
+        val inPreview = LocalInspectionMode.current
 
         val density = LocalDensity.current
         val itemWidthPx = with(density) { itemWidth.toPx() }
@@ -273,18 +277,27 @@ fun GlassTabBar(
                 modifier = Modifier
                     .fillMaxSize()
                     .layerBackdrop(barBackdrop)
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { barShape },
-                        effects = {
-                            // iOS 液态玻璃：轻微提鲜 + 磨砂 + 边缘明显折射
-                            vibrancy()
-                            blur(5.dp.toPx())
-                            lens(20.dp.toPx(), 36.dp.toPx())
-                        },
-                        // 边缘高光 + 大范围柔和外阴影，做出悬浮感
-                        highlight = { Highlight.Default },
-                        shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) }
+                    .then(
+                        if (inPreview) {
+                            Modifier.background(
+                                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                shape = barShape
+                            )
+                        } else {
+                            Modifier.drawBackdrop(
+                                backdrop = backdrop,
+                                shape = { barShape },
+                                effects = {
+                                    // iOS 液态玻璃：轻微提鲜 + 磨砂 + 边缘明显折射
+                                    vibrancy()
+                                    blur(5.dp.toPx())
+                                    lens(20.dp.toPx(), 36.dp.toPx())
+                                },
+                                // 边缘高光 + 大范围柔和外阴影，做出悬浮感
+                                highlight = { Highlight.Default },
+                                shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) }
+                            )
+                        }
                     )
             ) {
                 // 图标行
@@ -335,36 +348,46 @@ fun GlassTabBar(
                     .offset(x = sidePadding + thumbPadding + itemWidth * position)
                     .width(thumbWidth)
                     .height(thumbHeight)
-                    .drawBackdrop(
-                        backdrop = thumbBackdrop,
-                        shape = { Capsule() },
-                        // 高光、阴影、内阴影都乘按下进度：静止时滑块几乎只是一层淡色
-                        highlight = { Highlight.Default.copy(alpha = activeProgress) },
-                        shadow = { Shadow(alpha = activeProgress) },
-                        innerShadow = {
-                            InnerShadow(radius = 8.dp * activeProgress, alpha = activeProgress)
-                        },
-                        effects = {
-                            colorControls(contrast = contrast, saturation = saturation)
-                            lens(
-                                refractionHeight = lensHeight.toPx(),
-                                refractionAmount = lensAmount.toPx(),
-                                chromaticAberration = true
+                    .then(
+                        if (inPreview) {
+                            // 预览里滑块用半透明白，静止位置也能看出来
+                            Modifier.background(
+                                color = Color.White.copy(alpha = 0.5f),
+                                shape = Capsule()
                             )
-                        },
-                        // 缩放走绘制层：不参与布局，放大后可以自然溢出胶囊与父约束
-                        layerBlock = {
-                            val scale = 1f + (pressedScale - 1f) * activeProgress
-                            val v = velocity / 10f
-                            // 往哪边甩就把哪边拉长、另一边压扁，甩得越快越明显
-                            scaleX = scale / (1f - (v * 0.75f).coerceIn(-0.2f, 0.2f))
-                            scaleY = scale * (1f - (v * 0.25f).coerceIn(-0.2f, 0.2f))
-                        },
-                        onDrawSurface = {
-                            // 静止：只留一层很淡的中性色，让选中位置可辨；按下时退到一半
-                            drawRect(neutralTint, alpha = 1f - 0.5f * activeProgress)
-                            // 按下：叠一层白，把玻璃厚度提起来
-                            drawRect(Color.White.copy(alpha = surfaceAlpha))
+                        } else {
+                            Modifier.drawBackdrop(
+                                backdrop = thumbBackdrop,
+                                shape = { Capsule() },
+                                // 高光、阴影、内阴影都乘按下进度：静止时滑块几乎只是一层淡色
+                                highlight = { Highlight.Default.copy(alpha = activeProgress) },
+                                shadow = { Shadow(alpha = activeProgress) },
+                                innerShadow = {
+                                    InnerShadow(radius = 8.dp * activeProgress, alpha = activeProgress)
+                                },
+                                effects = {
+                                    colorControls(contrast = contrast, saturation = saturation)
+                                    lens(
+                                        refractionHeight = lensHeight.toPx(),
+                                        refractionAmount = lensAmount.toPx(),
+                                        chromaticAberration = true
+                                    )
+                                },
+                                // 缩放走绘制层：不参与布局，放大后可以自然溢出胶囊与父约束
+                                layerBlock = {
+                                    val scale = 1f + (pressedScale - 1f) * activeProgress
+                                    val v = velocity / 10f
+                                    // 往哪边甩就把哪边拉长、另一边压扁，甩得越快越明显
+                                    scaleX = scale / (1f - (v * 0.75f).coerceIn(-0.2f, 0.2f))
+                                    scaleY = scale * (1f - (v * 0.25f).coerceIn(-0.2f, 0.2f))
+                                },
+                                onDrawSurface = {
+                                    // 静止：只留一层很淡的中性色，让选中位置可辨；按下时退到一半
+                                    drawRect(neutralTint, alpha = 1f - 0.5f * activeProgress)
+                                    // 按下：叠一层白，把玻璃厚度提起来
+                                    drawRect(Color.White.copy(alpha = surfaceAlpha))
+                                }
+                            )
                         }
                     )
             )

@@ -8,6 +8,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -138,6 +140,10 @@ fun MainScreen() {
         Color.White.copy(alpha = 0.28f)
     }
 
+    // Compose Preview（layoutlib）不支持 RenderEffect，也不适合解码大图：
+    // 预览里把玻璃退化成纯色块并跳过背景图，保证实时渲染能出图，真机不受影响
+    val inPreview = LocalInspectionMode.current
+
     // 状态栏那一条的叠色：比标题框淡得多，只求图标能看清而不抢戏
     val statusBarTint = if (MiuixTheme.colorScheme.onBackground.luminance() > 0.5f) {
         Color.Black.copy(alpha = 0.14f)
@@ -185,12 +191,15 @@ fun MainScreen() {
                     .fillMaxSize()
                     .layerBackdrop(imageBackdrop)
             ) {
-                Image(
-                    painter = painterResource(R.drawable.bg_main),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
+                // 预览里不加载这张 2MB 的背景图，避免 layoutlib 解码超时导致渲染失败
+                if (!inPreview) {
+                    Image(
+                        painter = painterResource(R.drawable.bg_main),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
             }
 
             // 页面铺满整屏：不再为顶栏预留高度，内容可以一直延伸到状态栏下方
@@ -221,18 +230,25 @@ fun MainScreen() {
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
                     }
-                    .drawBackdrop(
-                        backdrop = imageBackdrop,
-                        shape = { RectangleShape },
-                        effects = {
-                            // 微微一层：只做磨砂 + 提鲜
-                            vibrancy()
-                            blur(10.dp.toPx())
-                        },
-                        // 不要高光与阴影，否则矩形边缘会露出亮线/暗边
-                        highlight = { null },
-                        shadow = { null },
-                        onDrawSurface = { drawRect(statusBarTint) }
+                    .then(
+                        if (inPreview) {
+                            // 预览退化成一层纯色
+                            Modifier.background(color = statusBarTint)
+                        } else {
+                            Modifier.drawBackdrop(
+                                backdrop = imageBackdrop,
+                                shape = { RectangleShape },
+                                effects = {
+                                    // 微微一层：只做磨砂 + 提鲜
+                                    vibrancy()
+                                    blur(10.dp.toPx())
+                                },
+                                // 不要高光与阴影，否则矩形边缘会露出亮线/暗边
+                                highlight = { null },
+                                shadow = { null },
+                                onDrawSurface = { drawRect(statusBarTint) }
+                            )
+                        }
                     )
                     .drawWithContent {
                         drawContent()
@@ -275,17 +291,23 @@ fun MainScreen() {
                         .width(barWidth * searchExpand)
                         .height(56.dp)
                         .graphicsLayer { alpha = searchExpand }
-                        .drawBackdrop(
-                            backdrop = imageBackdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                vibrancy()
-                                blur(5.dp.toPx())
-                                lens(20.dp.toPx(), 36.dp.toPx())
-                            },
-                            highlight = { Highlight.Default },
-                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
-                            onDrawSurface = { drawRect(topBarTint) }
+                        .then(
+                            if (inPreview) {
+                                Modifier.background(color = topBarTint, shape = Capsule())
+                            } else {
+                                Modifier.drawBackdrop(
+                                    backdrop = imageBackdrop,
+                                    shape = { Capsule() },
+                                    effects = {
+                                        vibrancy()
+                                        blur(5.dp.toPx())
+                                        lens(20.dp.toPx(), 36.dp.toPx())
+                                    },
+                                    highlight = { Highlight.Default },
+                                    shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                                    onDrawSurface = { drawRect(topBarTint) }
+                                )
+                            }
                         )
                         .padding(horizontal = 18.dp),
                     contentAlignment = Alignment.CenterStart
@@ -326,18 +348,24 @@ fun MainScreen() {
                         .width(barWidth)
                         .height(56.dp)
                         .graphicsLayer { alpha = 1f - searchExpand }
-                        .drawBackdrop(
-                            backdrop = imageBackdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                // 和底栏同一套：提鲜 + 磨砂 + 边缘折射
-                                vibrancy()
-                                blur(5.dp.toPx())
-                                lens(20.dp.toPx(), 36.dp.toPx())
-                            },
-                            highlight = { Highlight.Default },
-                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
-                            onDrawSurface = { drawRect(topBarTint) }
+                        .then(
+                            if (inPreview) {
+                                Modifier.background(color = topBarTint, shape = Capsule())
+                            } else {
+                                Modifier.drawBackdrop(
+                                    backdrop = imageBackdrop,
+                                    shape = { Capsule() },
+                                    effects = {
+                                        // 和底栏同一套：提鲜 + 磨砂 + 边缘折射
+                                        vibrancy()
+                                        blur(5.dp.toPx())
+                                        lens(20.dp.toPx(), 36.dp.toPx())
+                                    },
+                                    highlight = { Highlight.Default },
+                                    shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                                    onDrawSurface = { drawRect(topBarTint) }
+                                )
+                            }
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -362,17 +390,23 @@ fun MainScreen() {
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .size(actionSize)
-                        .drawBackdrop(
-                            backdrop = imageBackdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                vibrancy()
-                                blur(5.dp.toPx())
-                                lens(20.dp.toPx(), 36.dp.toPx())
-                            },
-                            highlight = { Highlight.Default },
-                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
-                            onDrawSurface = { drawRect(topBarTint) }
+                        .then(
+                            if (inPreview) {
+                                Modifier.background(color = topBarTint, shape = Capsule())
+                            } else {
+                                Modifier.drawBackdrop(
+                                    backdrop = imageBackdrop,
+                                    shape = { Capsule() },
+                                    effects = {
+                                        vibrancy()
+                                        blur(5.dp.toPx())
+                                        lens(20.dp.toPx(), 36.dp.toPx())
+                                    },
+                                    highlight = { Highlight.Default },
+                                    shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                                    onDrawSurface = { drawRect(topBarTint) }
+                                )
+                            }
                         )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },

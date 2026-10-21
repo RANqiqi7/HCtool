@@ -3,6 +3,7 @@ package com.example.hctool.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -17,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
@@ -54,6 +56,8 @@ fun GlassFab(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 900f),
         label = "fabPress"
     )
+    // Compose Preview（layoutlib）不支持 RenderEffect，预览里把玻璃退化成纯色
+    val inPreview = LocalInspectionMode.current
 
     Box(
         modifier = modifier
@@ -63,17 +67,26 @@ fun GlassFab(
                 scaleX = scale
                 scaleY = scale
             }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { Capsule() },
-                effects = {
-                    // 与底栏完全同一套参数，保证两块玻璃看起来是同一材质
-                    vibrancy()
-                    blur(5.dp.toPx())
-                    lens(20.dp.toPx(), 36.dp.toPx())
-                },
-                highlight = { Highlight.Default },
-                shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) }
+            .then(
+                if (inPreview) {
+                    Modifier.background(
+                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        shape = Capsule()
+                    )
+                } else {
+                    Modifier.drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { Capsule() },
+                        effects = {
+                            // 与底栏完全同一套参数，保证两块玻璃看起来是同一材质
+                            vibrancy()
+                            blur(5.dp.toPx())
+                            lens(20.dp.toPx(), 36.dp.toPx())
+                        },
+                        highlight = { Highlight.Default },
+                        shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) }
+                    )
+                }
             )
             .clickable(
                 interactionSource = interactionSource,
