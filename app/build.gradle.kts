@@ -90,6 +90,7 @@ dependencies {
     
     // 液态玻璃效果库
     implementation(libs.backdrop)
+    implementation(libs.kyant.shapes)
     
     // miuix 全套依赖
     implementation(libs.miuix.ui)

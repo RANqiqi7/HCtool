@@ -9,6 +9,8 @@ activityCompose = "1.8.0"
 kotlin = "2.4.20"
 composeBom = "2026.02.01"
 backdrop = "2.0.1"
+# kyant 形状库（提供连续曲率胶囊 Capsule）
+kyantShapes = "1.2.1"
 # miuix 版本号
 miuix = "0.9.4"
 
@@ -28,6 +30,8 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
+# 连续曲率形状（Capsule 等），与 backdrop 同源
+kyant-shapes = { group = "io.github.kyant0", name = "shapes", version.ref = "kyantShapes" }
 # miuix 核心 UI 组件库
 miuix-ui = { group = "top.yukonga.miuix.kmp", name = "miuix-ui-android", version.ref = "miuix" }
 # miuix 偏好设置组件库
