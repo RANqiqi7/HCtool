@@ -4,8 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,12 +19,16 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,6 +37,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -77,6 +88,7 @@ import com.kyant.shapes.Capsule
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.ListView
 import top.yukonga.miuix.kmp.icon.extended.Search
@@ -97,6 +109,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen() {
     // 当前选中的标签下标，赋值后会触发重组刷新界面
@@ -156,6 +169,18 @@ fun MainScreen() {
     // 顶部搜索：false = 只显示标题，true = 输入框向左展开
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // 快捷筛选面板：展开后搜索条向下延伸，里面是预设标签
+    var filtersOpen by remember { mutableStateOf(false) }
+    // 当前选中的快捷标签，null 表示没有筛选
+    var activeFilter by remember { mutableStateOf<String?>(null) }
+    // 预设标签，后续可以按页面换成各自的筛选项
+    val quickFilters = listOf("全部", "最近 7 天", "异常", "待处理", "已完成")
+    // 展开按钮的箭头：收起时朝下（90°），展开时翻上去朝上（270°）
+    val filterArrow by animateFloatAsState(
+        targetValue = if (filtersOpen) 270f else 90f,
+        animationSpec = tween(durationMillis = 220),
+        label = "filterArrow"
+    )
     // 展开进度：同时驱动标题框收缩、输入框展开的宽度与透明度
     val searchExpand by animateFloatAsState(
         targetValue = if (searching) 1f else 0f,
@@ -175,6 +200,9 @@ fun MainScreen() {
             focusManager.clearFocus()
             keyboard?.hide()
             query = ""
+            // 收起搜索时把快捷筛选一并复位
+            filtersOpen = false
+            activeFilter = null
         }
     }
 
@@ -282,23 +310,29 @@ fun MainScreen() {
                 // 标题框与底栏等宽：整行扣掉右侧按钮和中间那道间距
                 val barWidth = maxWidth - actionSize - gap
 
+                // 面板会向下长高，所以不用 Capsule（高度一变就成椭圆），
+                // 固定 32dp 圆角：收起时正好是胶囊，展开时是圆角矩形
+                val searchShape = RoundedCornerShape(32.dp)
+
                 // 搜索输入框：右边缘贴着按钮，宽度从 0 长到最大，
-                // 看起来就是从右侧按钮那边往左推开的；左侧要给收缩后的标题球留位置
+                // 看起来就是从右侧按钮那边往左推开的；左侧要给收缩后的标题球留位置。
+                // 点右侧那个无边框箭头后，这块玻璃会向下延伸出快捷筛选面板
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
+                        .align(Alignment.TopEnd)
                         // 给右侧按钮让出位置，宽度从这里往左长
                         .padding(end = actionSize + gap)
                         .width((barWidth - actionSize - gap) * searchExpand)
-                        .height(actionSize)
+                        // 高度由内容决定：收起时只有一行输入，展开后再加上标签面板
+                        .heightIn(min = actionSize)
                         .graphicsLayer { alpha = searchExpand }
                         .then(
                             if (inPreview) {
-                                Modifier.background(color = topBarTint, shape = Capsule())
+                                Modifier.background(color = topBarTint, shape = searchShape)
                             } else {
                                 Modifier.drawBackdrop(
                                     backdrop = imageBackdrop,
-                                    shape = { Capsule() },
+                                    shape = { searchShape },
                                     effects = {
                                         vibrancy()
                                         blur(5.dp.toPx())
@@ -311,34 +345,93 @@ fun MainScreen() {
                             }
                         )
                         .padding(horizontal = 18.dp),
-                    contentAlignment = Alignment.CenterStart
+                    contentAlignment = Alignment.TopStart
                 ) {
                     if (searching) {
-                        BasicTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            singleLine = true,
-                            textStyle = MiuixTheme.textStyles.body2.copy(
-                                color = MiuixTheme.colorScheme.onSurface
-                            ),
-                            cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            // 键盘上的"搜索"键：先只收起面板，真正的搜索逻辑待接入
-                            keyboardActions = KeyboardActions(onSearch = { searching = false }),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focusRequester),
-                            decorationBox = { innerTextField ->
-                                if (query.isEmpty()) {
-                                    Text(
-                                        text = "搜索",
-                                        style = MiuixTheme.textStyles.body2,
-                                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(actionSize),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                BasicTextField(
+                                    value = query,
+                                    onValueChange = {
+                                        query = it
+                                        // 手动改输入时取消标签选中，避免两边不一致
+                                        activeFilter = null
+                                    },
+                                    singleLine = true,
+                                    textStyle = MiuixTheme.textStyles.body2.copy(
+                                        color = MiuixTheme.colorScheme.onSurface
+                                    ),
+                                    cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                    // 键盘上的"搜索"键：先只收起面板，真正的搜索逻辑待接入
+                                    keyboardActions = KeyboardActions(onSearch = { searching = false }),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(focusRequester),
+                                    decorationBox = { innerTextField ->
+                                        if (query.isEmpty()) {
+                                            Text(
+                                                text = "搜索",
+                                                style = MiuixTheme.textStyles.body2,
+                                                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                )
+                                // 无边框展开按钮：点一下就把下面的快捷筛选拉出来
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) { filtersOpen = !filtersOpen },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        imageVector = MiuixIcons.Regular.ChevronForward,
+                                        contentDescription = if (filtersOpen) "收起快捷筛选" else "展开快捷筛选",
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .graphicsLayer { rotationZ = filterArrow },
+                                        colorFilter = ColorFilter.tint(
+                                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                        )
                                     )
                                 }
-                                innerTextField()
                             }
-                        )
+
+                            // 快捷筛选：预设标签，点一下回填到输入框，再点一下取消
+                            AnimatedVisibility(
+                                visible = filtersOpen,
+                                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                            ) {
+                                FlowRow(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 14.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    quickFilters.forEach { label ->
+                                        QuickFilterChip(
+                                            label = label,
+                                            selected = activeFilter == label
+                                        ) {
+                                            activeFilter = if (activeFilter == label) null else label
+                                            query = activeFilter ?: ""
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -346,7 +439,7 @@ fun MainScreen() {
                 // 展开搜索时向右收窄，最后只剩一个和搜索按钮同大的圆球
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterStart)
+                        .align(Alignment.TopStart)
                         .width(barWidth - (barWidth - actionSize) * searchExpand)
                         .height(actionSize)
                         .graphicsLayer {
@@ -386,7 +479,11 @@ fun MainScreen() {
                             text = items[index],
                             style = MiuixTheme.textStyles.title3,
                             color = MiuixTheme.colorScheme.onSurface,
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.graphicsLayer {
+                                // 收缩到一半时标题就淡出，最后只剩一个空球
+                                alpha = (1f - searchExpand * 2f).coerceIn(0f, 1f)
+                            }
                         )
                     }
                 }
@@ -394,7 +491,7 @@ fun MainScreen() {
                 // 搜索按钮：与标题框、底栏同一材质，展开时图标变成关闭
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
+                        .align(Alignment.TopEnd)
                         .size(actionSize)
                         .then(
                             if (inPreview) {
@@ -485,5 +582,49 @@ fun MainScreen() {
 fun MainScreenPreview() {
     HCtoolTheme {
         MainScreen()
+    }
+}
+
+/**
+ * 搜索面板里的快捷筛选胶囊：无边框，选中后换成主题色
+ *
+ * @param label 标签文字
+ * @param selected 是否已选中
+ * @param onClick 点击回调
+ */
+@Composable
+private fun QuickFilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(Capsule())
+            .background(
+                if (selected) {
+                    MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)
+                } else {
+                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                }
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.body2,
+            color = if (selected) {
+                MiuixTheme.colorScheme.primary
+            } else {
+                MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+            },
+            maxLines = 1
+        )
     }
 }
