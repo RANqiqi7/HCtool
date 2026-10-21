@@ -5,20 +5,31 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,15 +41,22 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.hctool.R
@@ -49,12 +67,17 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
-import top.yukonga.miuix.kmp.basic.Scaffold
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
+import com.kyant.shapes.Capsule
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.ListView
+import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.SearchDevice
 import top.yukonga.miuix.kmp.icon.extended.Tasks
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -108,11 +131,45 @@ fun MainScreen() {
         drawContent()
     }
 
-    // 顶栏玻璃的表面色：浅色主题叠白、深色主题叠黑，决定"微透"的浓度
+    // 悬浮标题框的表面色：浅色主题叠白、深色主题叠黑，决定"微透"的浓度
     val topBarTint = if (MiuixTheme.colorScheme.onBackground.luminance() > 0.5f) {
         Color.Black.copy(alpha = 0.28f)
     } else {
         Color.White.copy(alpha = 0.28f)
+    }
+
+    // 状态栏那一条的叠色：比标题框淡得多，只求图标能看清而不抢戏
+    val statusBarTint = if (MiuixTheme.colorScheme.onBackground.luminance() > 0.5f) {
+        Color.Black.copy(alpha = 0.14f)
+    } else {
+        Color.White.copy(alpha = 0.14f)
+    }
+    // 状态栏高度：顶部那条模糊层按它定高
+    val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
+    // 顶部搜索：false = 只显示标题，true = 输入框向左展开
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    // 展开进度：同时驱动标题框收缩、输入框展开的宽度与透明度
+    val searchExpand by animateFloatAsState(
+        targetValue = if (searching) 1f else 0f,
+        animationSpec = tween(durationMillis = 260),
+        label = "searchExpand"
+    )
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // 展开后自动聚焦并弹键盘；收起时释放焦点、清空输入
+    LaunchedEffect(searching) {
+        if (searching) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        } else {
+            focusManager.clearFocus()
+            keyboard?.hide()
+            query = ""
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -136,93 +193,203 @@ fun MainScreen() {
                 )
             }
 
-            // miuix 页面骨架：负责顶栏与内容区的布局、内边距分配
-            Scaffold(
-                // 必须透明，否则 miuix 的 surface 会盖住背景图
-                containerColor = Color.Transparent,
-                topBar = {
-                    // 顶栏玻璃：只采背景图那一层，所以不会把标题自己折进去
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            // 离屏层：让下面的 DstOut 只在顶栏这块区域内擦除
-                            .graphicsLayer {
-                                compositingStrategy = CompositingStrategy.Offscreen
-                            }
-                            .drawBackdrop(
-                                backdrop = imageBackdrop,
-                                shape = { RectangleShape },
-                                effects = {
-                                    // 比底栏轻得多：只做磨砂 + 提鲜，不做边缘折射
-                                    vibrancy()
-                                    blur(8.dp.toPx())
-                                },
-                                // 关掉默认的边缘高光与外阴影：顶栏只要一层磨砂，
-                                // 否则矩形底边那条高光看起来就像一条分割线
-                                highlight = { null },
-                                shadow = { null },
-                                onDrawSurface = { drawRect(topBarTint) }
-                            )
-                            // 底边渐隐：用 DstOut 把最后一段擦成透明，取代原来的硬分割线
-                            .drawWithContent {
-                                drawContent()
-                                val fade = 24.dp.toPx()
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        0f to Color.Transparent,
-                                        1f to Color.Black,
-                                        startY = size.height - fade,
-                                        endY = size.height
-                                    ),
-                                    blendMode = BlendMode.DstOut
-                                )
-                            }
-                    ) {
-                        // 标题条：高度 52dp（与 miuix CollapsedHeight 一致），
-                        // 自己铺一层是为了能对标题文字做淡入淡出
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                // 让玻璃连状态栏一起覆盖，标题本身下移到状态栏下方
-                                .statusBarsPadding()
-                                .height(52.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // 标题跟随底栏选中项：设备页显示"设备"，以此类推。
-                            // 切换时旧标题淡出、新标题淡入
-                            Crossfade(
-                                targetState = selectedIndex,
-                                animationSpec = tween(durationMillis = 220),
-                                label = "topBarTitle"
-                            ) { index ->
-                                Text(
-                                    text = items[index],
-                                    style = MiuixTheme.textStyles.title3,
-                                    color = MiuixTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
+            // 页面铺满整屏：不再为顶栏预留高度，内容可以一直延伸到状态栏下方
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // 使用 miuix 主题的标题样式与主题色，深色模式下自动适配
+                    Text(
+                        text = pageTexts[page],
+                        style = MiuixTheme.textStyles.title1,
+                        color = MiuixTheme.colorScheme.onBackground
+                    )
                 }
-            ) { innerPadding ->
-                // content 槽位必须消费 innerPadding，否则内容会被顶栏遮挡
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) { page ->
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // 使用 miuix 主题的标题样式与主题色，深色模式下自动适配
-                        Text(
-                            text = pageTexts[page],
-                            style = MiuixTheme.textStyles.title1,
-                            color = MiuixTheme.colorScheme.onBackground
+            }
+
+            // 状态栏那一条：只盖住状态栏 + 一小段余量，底边用 DstOut 渐隐，
+            // 让模糊平滑过渡到下面的清晰页面，不会出现硬边
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(statusBarHeight + 12.dp)
+                    // 离屏层：让 DstOut 只作用在这一条区域内
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawBackdrop(
+                        backdrop = imageBackdrop,
+                        shape = { RectangleShape },
+                        effects = {
+                            // 微微一层：只做磨砂 + 提鲜
+                            vibrancy()
+                            blur(10.dp.toPx())
+                        },
+                        // 不要高光与阴影，否则矩形边缘会露出亮线/暗边
+                        highlight = { null },
+                        shadow = { null },
+                        onDrawSurface = { drawRect(statusBarTint) }
+                    )
+                    .drawWithContent {
+                        drawContent()
+                        // 末尾 18dp 逐渐擦成透明，形成柔和的分界
+                        val fade = 18.dp.toPx()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                1f to Color.Black,
+                                startY = size.height - fade,
+                                endY = size.height
+                            ),
+                            blendMode = BlendMode.DstOut
                         )
                     }
+            )
+
+            // 顶部悬浮层：标题框水平居中，搜索按钮靠右；点搜索后输入框从右向左长出来
+            BoxWithConstraints(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(top = 10.dp)
+                    .padding(horizontal = 20.dp)
+            ) {
+                // 与底部 FAB 同尺寸，圆心才会和它严格对齐
+                val actionSize = 64.dp
+                val gap = 12.dp
+                // 标题框与底栏等宽：整行扣掉右侧按钮和中间那道间距
+                val barWidth = maxWidth - actionSize - gap
+
+                // 搜索输入框：右边缘贴着按钮，宽度从 0 长到最大，
+                // 看起来就是从右侧按钮那边往左推开的
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        // 给右侧按钮让出位置，宽度从这里往左长
+                        .padding(end = actionSize + gap)
+                        .width(barWidth * searchExpand)
+                        .height(56.dp)
+                        .graphicsLayer { alpha = searchExpand }
+                        .drawBackdrop(
+                            backdrop = imageBackdrop,
+                            shape = { Capsule() },
+                            effects = {
+                                vibrancy()
+                                blur(5.dp.toPx())
+                                lens(20.dp.toPx(), 36.dp.toPx())
+                            },
+                            highlight = { Highlight.Default },
+                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                            onDrawSurface = { drawRect(topBarTint) }
+                        )
+                        .padding(horizontal = 18.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (searching) {
+                        BasicTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            textStyle = MiuixTheme.textStyles.body2.copy(
+                                color = MiuixTheme.colorScheme.onSurface
+                            ),
+                            cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            // 键盘上的"搜索"键：先只收起面板，真正的搜索逻辑待接入
+                            keyboardActions = KeyboardActions(onSearch = { searching = false }),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester),
+                            decorationBox = { innerTextField ->
+                                if (query.isEmpty()) {
+                                    Text(
+                                        text = "搜索",
+                                        style = MiuixTheme.textStyles.body2,
+                                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+                }
+
+                // 标题框：宽度与底栏相同、左边缘也对齐，看起来就像上下同一条
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(barWidth)
+                        .height(56.dp)
+                        .graphicsLayer { alpha = 1f - searchExpand }
+                        .drawBackdrop(
+                            backdrop = imageBackdrop,
+                            shape = { Capsule() },
+                            effects = {
+                                // 和底栏同一套：提鲜 + 磨砂 + 边缘折射
+                                vibrancy()
+                                blur(5.dp.toPx())
+                                lens(20.dp.toPx(), 36.dp.toPx())
+                            },
+                            highlight = { Highlight.Default },
+                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                            onDrawSurface = { drawRect(topBarTint) }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // 标题跟随底栏选中项：设备页显示"设备"，以此类推。
+                    // 切换时旧标题淡出、新标题淡入
+                    Crossfade(
+                        targetState = selectedIndex,
+                        animationSpec = tween(durationMillis = 220),
+                        label = "topBarTitle"
+                    ) { index ->
+                        Text(
+                            text = items[index],
+                            style = MiuixTheme.textStyles.title3,
+                            color = MiuixTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                // 搜索按钮：与标题框、底栏同一材质，展开时图标变成关闭
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(actionSize)
+                        .drawBackdrop(
+                            backdrop = imageBackdrop,
+                            shape = { Capsule() },
+                            effects = {
+                                vibrancy()
+                                blur(5.dp.toPx())
+                                lens(20.dp.toPx(), 36.dp.toPx())
+                            },
+                            highlight = { Highlight.Default },
+                            shadow = { Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                            onDrawSurface = { drawRect(topBarTint) }
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { searching = !searching },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        imageVector = if (searching) {
+                            MiuixIcons.Regular.Close
+                        } else {
+                            MiuixIcons.Regular.Search
+                        },
+                        contentDescription = if (searching) "关闭搜索" else "搜索",
+                        modifier = Modifier.size(28.dp),
+                        colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
+                    )
                 }
             }
         }
