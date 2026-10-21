@@ -13,3 +13,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+# 本地图片备份，不入版本库
+/.backup
