@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,7 +25,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,9 +34,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
@@ -46,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
@@ -67,9 +68,14 @@ import top.yukonga.miuix.kmp.icon.extended.MapAlbum
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.io.File
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** 弹框背后的半透明遮罩 */
 private val DialogScrim = Color.Black.copy(alpha = 0.35f)
+
+/** 抓取到的输入法高度（取出现过的最大值并跨弹窗保留），用于固定弹窗底边的预留 */
+private var RememberedImeHeight by mutableStateOf(0.dp)
 
 /** 弹框头部统一高度，保证标题与各个按钮垂直居中对齐 */
 private val DialogHeaderHeight = 44.dp
@@ -127,10 +133,11 @@ fun AddDeviceDialog(
     val bitmap = rememberImageBitmap(imageUri)
     val canSave = nickname.isNotBlank()
 
-    // 输入法：等它完全弹出（动画结束）后再一次性避让，不跟随输入法逐帧移动，避免闪现
-    val imeTarget = WindowInsets.imeAnimationTarget.asPaddingValues().calculateBottomPadding()
-    val imeCurrent = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-    val imeSettled = imeTarget > 0.dp && imeCurrent >= imeTarget - 1.dp
+    // 抓取输入法高度：记录出现过的最大值并跨弹窗保留，作为底边的固定预留
+    val imeNow = WindowInsets.imeAnimationTarget.asPaddingValues().calculateBottomPadding()
+    LaunchedEffect(imeNow) {
+        if (imeNow > RememberedImeHeight) RememberedImeHeight = imeNow
+    }
     // 上下留白保持一致：底部离输入法、顶部离主顶栏下沿用同一个 gap
     val gap = 16.dp
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -138,44 +145,65 @@ fun AddDeviceDialog(
     val topLimit = statusTop + 74.dp + gap
     val density = LocalDensity.current
 
+    // 入场：挂载后翻转 shown，面板从屏幕底部外平滑弹入、遮罩同步淡入
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    // 关闭：先把面板收回屏幕底部外、遮罩淡出，动画结束后再真正移除
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        shown = false
+        scope.launch {
+            delay(300)
+            onDismiss()
+        }
+    }
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "addDialogScrim"
+    )
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(DialogScrim),
+            .background(DialogScrim.copy(alpha = DialogScrim.alpha * scrimAlpha)),
         contentAlignment = Alignment.Center
     ) {
         val screenH = maxHeight
-        // 弹窗最大高度：整屏 - 顶部限制 - (输入法 + gap)；内容超出时内部上下滚动
-        val maxDialogHeight = if (imeSettled) {
-            (screenH - topLimit - (imeTarget + gap)).coerceAtLeast(120.dp)
-        } else {
-            screenH
-        }
-        // 记录弹窗实际高度，用于算居中时底边位置
-        var dialogH by remember { mutableStateOf(0.dp) }
-        // 居中底边 vs 允许底边（输入法上方 gap）：超出部分整体上移
-        val centeredBottom = (screenH + dialogH) / 2
-        val allowedBottom = screenH - imeTarget - gap
-        val shiftTarget = if (imeSettled) {
-            (centeredBottom - allowedBottom).coerceAtLeast(0.dp)
-        } else {
-            0.dp
-        }
-        val shift by animateDpAsState(
-            targetValue = shiftTarget,
-            animationSpec = tween(durationMillis = 180),
-            label = "addDialogShift"
+        // 预留输入法高度做平滑过渡，避免首次抓取到底边跳变
+        val reserved by animateDpAsState(
+            targetValue = RememberedImeHeight,
+            animationSpec = tween(durationMillis = 200),
+            label = "addDialogImeReserve"
         )
-        val shiftPx = with(density) { shift.toPx() }
+        // 弹窗底边固定位置：整屏 - 预留输入法高度 - gap；无论输入法是否弹出都不被遮挡
+        val bottomLine = screenH - reserved - gap
+        // 弹窗最大高度：底边 - 顶部限制；内容超出时内部上下滚动
+        val maxDialogHeight = (bottomLine - topLimit).coerceAtLeast(120.dp)
+        // 在「顶栏下沿 ~ 键盘上沿」这段可用区域内垂直居中：
+        // 无键盘时即整屏（顶栏以下）居中，有键盘时随预留高度整体上移，始终不被遮挡。
+        // 不再依赖首次抓取到的输入法高度，避免第一次弹出时贴在屏幕底部
+        val pinOffset = (topLimit - reserved) / 2
+        val pinOffsetPx = with(density) { pinOffset.toPx() }
+        // 入场上移量：初始在屏幕下方一整屏，shown 后回到 0
+        val enter by animateDpAsState(
+            targetValue = if (shown) 0.dp else screenH,
+            animationSpec = tween(durationMillis = 280),
+            label = "addDialogEnter"
+        )
+        val enterPx = with(density) { enter.toPx() }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 28.dp)
                 .heightIn(max = maxDialogHeight)
-                .onSizeChanged { dialogH = with(density) { it.height.toDp() } }
-                // 输入法完全弹出后再整体上移避让（一次性动画，不跟随输入法）
-                .graphicsLayer { translationY = -shiftPx }
+                // 在顶栏与键盘之间的可用区域垂直居中（不随输入法弹出再做避让）；
+                // 叠加入场位移：刚弹入时从屏幕底部外滑上来
+                .graphicsLayer { translationY = enterPx + pinOffsetPx }
                 .frostedSurface(
                     backdrop = backdrop,
                     shape = RoundedCornerShape(28.dp),
@@ -196,7 +224,7 @@ fun AddDeviceDialog(
                     backdrop = backdrop,
                     icon = MiuixIcons.Regular.Close,
                     contentDescription = "取消添加",
-                    onClick = onDismiss,
+                    onClick = { requestClose() },
                     tint = Color(0xFFFF453A),
                     frosted = true
                 )
@@ -290,6 +318,7 @@ fun AddDeviceDialog(
  * 所有改动先作用于本地草稿，点保存才写回 store；
  * 系统返回键或点击弹框外任意处直接关闭且不保存。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MapEditDialog(
     backdrop: Backdrop,
@@ -304,25 +333,83 @@ fun MapEditDialog(
         .let { if (it < 0) 0 else it }
     val current = mapsDraft[currentIndex]
 
+    // 入场：挂载后翻转 shown，面板从屏幕底部外平滑弹入、遮罩同步淡入
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    // 关闭：先把面板收回屏幕底部外、遮罩淡出，动画结束后再真正移除
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        shown = false
+        scope.launch {
+            delay(300)
+            onDismiss()
+        }
+    }
     // 系统返回键：关闭且不保存
-    BackHandler { onDismiss() }
+    BackHandler { requestClose() }
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "mapEditScrim"
+    )
+    val density = LocalDensity.current
 
-    Box(
+    // 抓取输入法高度：与新增设备弹窗共用同一份预留，保证底边任何时候不被输入法遮挡
+    val imeNow = WindowInsets.imeAnimationTarget.asPaddingValues().calculateBottomPadding()
+    LaunchedEffect(imeNow) {
+        if (imeNow > RememberedImeHeight) RememberedImeHeight = imeNow
+    }
+    // 上下留白保持一致：底部离输入法、顶部离主顶栏下沿用同一个 gap
+    val gap = 16.dp
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // 主顶栏下沿 ≈ 状态栏 + 10dp 上边距 + 64dp 标题胶囊高，再留一个 gap
+    val topLimit = statusTop + 74.dp + gap
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(DialogScrim)
+            .background(DialogScrim.copy(alpha = DialogScrim.alpha * scrimAlpha))
             // 点击弹框外任意处：关闭且不保存
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
-            ) { onDismiss() },
+            ) { requestClose() },
         contentAlignment = Alignment.Center
     ) {
+        val screenH = maxHeight
+        // 预留输入法高度做平滑过渡，避免首次抓取到底边跳变
+        val reserved by animateDpAsState(
+            targetValue = RememberedImeHeight,
+            animationSpec = tween(durationMillis = 200),
+            label = "mapEditImeReserve"
+        )
+        // 弹窗底边固定位置：整屏 - 预留输入法高度 - gap；无论输入法是否弹出都不被遮挡
+        val bottomLine = screenH - reserved - gap
+        // 弹窗最大高度：底边 - 顶部限制；内容超出时内部上下滚动
+        val maxDialogHeight = (bottomLine - topLimit).coerceAtLeast(120.dp)
+        // 在「顶栏下沿 ~ 键盘上沿」这段可用区域内垂直居中：
+        // 无键盘时即整屏（顶栏以下）居中，有键盘时随预留高度整体上移，始终不被遮挡。
+        // 不再依赖首次抓取到的输入法高度，避免第一次弹出时贴在屏幕底部
+        val pinOffset = (topLimit - reserved) / 2
+        val pinOffsetPx = with(density) { pinOffset.toPx() }
+        // 入场上移量：初始在屏幕下方一整屏，shown 后回到 0
+        val enter by animateDpAsState(
+            targetValue = if (shown) 0.dp else screenH,
+            animationSpec = tween(durationMillis = 280),
+            label = "mapEditEnter"
+        )
+        val enterPx = with(density) { enter.toPx() }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 28.dp)
-                .heightIn(max = 520.dp)
+                .heightIn(max = maxDialogHeight)
+                // 在顶栏与键盘之间的可用区域垂直居中（不随输入法弹出再做避让）；
+                // 叠加入场位移：刚弹入时从屏幕底部外滑上来
+                .graphicsLayer { translationY = enterPx + pinOffsetPx }
                 .frostedSurface(
                     backdrop = backdrop,
                     shape = RoundedCornerShape(28.dp),
@@ -336,48 +423,13 @@ fun MapEditDialog(
                 ) { },
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 头部：新建地图 | 删除 | 地图编辑 | 保存
-            Row(
+            // 头部：新建地图 | 删除 | 地图编辑(强制居中) | 保存
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(DialogHeaderHeight),
-                verticalAlignment = Alignment.CenterVertically
+                    .height(DialogHeaderHeight)
             ) {
-                GlassIconButton(
-                    backdrop = backdrop,
-                    icon = MiuixIcons.Regular.MapAlbum,
-                    contentDescription = "新建地图",
-                    onClick = {
-                        val id = DeviceStore.newId()
-                        mapsDraft.add(
-                            DeviceMap(
-                                id = id,
-                                name = "地图 ${mapsDraft.size + 1}",
-                                rows = 4,
-                                cols = 4
-                            )
-                        )
-                        selectedDraftId = id
-                    },
-                    size = 38.dp,
-                    frosted = true
-                )
-                GlassIconButton(
-                    backdrop = backdrop,
-                    icon = MiuixIcons.Regular.Delete,
-                    contentDescription = "删除当前地图",
-                    onClick = {
-                        // 至少保留一张地图；删除后选中相邻一张
-                        if (mapsDraft.size > 1) {
-                            val idx = currentIndex
-                            mapsDraft.removeAt(idx)
-                            selectedDraftId = mapsDraft[minOf(idx, mapsDraft.lastIndex)].id
-                        }
-                    },
-                    size = 38.dp,
-                    tint = Color(0xFFFF453A),
-                    frosted = true
-                )
+                // 标题强制居中：用整宽 Box 居中对齐，不受两侧按钮宽度影响
                 Text(
                     text = "地图编辑",
                     style = MiuixTheme.textStyles.title3,
@@ -385,16 +437,58 @@ fun MapEditDialog(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.align(Alignment.Center)
                 )
+                // 左侧两个按钮：拉开间距，避免贴在一起
+                Row(
+                    modifier = Modifier.align(Alignment.CenterStart),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = MiuixIcons.Regular.MapAlbum,
+                        contentDescription = "新建地图",
+                        onClick = {
+                            val id = DeviceStore.newId()
+                            mapsDraft.add(
+                                DeviceMap(
+                                    id = id,
+                                    name = "地图 ${mapsDraft.size + 1}",
+                                    rows = 4,
+                                    cols = 4
+                                )
+                            )
+                            selectedDraftId = id
+                        },
+                        size = 38.dp,
+                        frosted = true
+                    )
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = MiuixIcons.Regular.Delete,
+                        contentDescription = "删除当前地图",
+                        onClick = {
+                            // 至少保留一张地图；删除后选中相邻一张
+                            if (mapsDraft.size > 1) {
+                                val idx = currentIndex
+                                mapsDraft.removeAt(idx)
+                                selectedDraftId = mapsDraft[minOf(idx, mapsDraft.lastIndex)].id
+                            }
+                        },
+                        size = 38.dp,
+                        tint = Color(0xFFFF453A),
+                        frosted = true
+                    )
+                }
                 GlassIconButton(
                     backdrop = backdrop,
                     icon = MiuixIcons.Regular.Ok,
                     contentDescription = "保存",
                     onClick = {
                         store.replaceMaps(mapsDraft.toList(), selectedDraftId)
-                        onDismiss()
+                        requestClose()
                     },
+                    modifier = Modifier.align(Alignment.CenterEnd),
                     size = 38.dp,
                     frosted = true
                 )

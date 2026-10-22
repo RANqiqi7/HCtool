@@ -4,24 +4,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,7 +40,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -77,14 +67,12 @@ import com.example.hctool.ui.device.rememberDeviceStore
 import com.example.hctool.ui.theme.HCtoolTheme
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.shapes.Capsule
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop as miuixLayerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop as rememberMiuixLayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.ListView
 import top.yukonga.miuix.kmp.icon.extended.Search
@@ -165,18 +153,6 @@ fun MainScreen() {
     // 顶部搜索：false = 只显示标题，true = 输入框向左展开
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    // 快捷筛选面板：展开后搜索条向下延伸，里面是预设标签
-    var filtersOpen by remember { mutableStateOf(false) }
-    // 当前选中的快捷标签，null 表示没有筛选
-    var activeFilter by remember { mutableStateOf<String?>(null) }
-    // 预设标签，后续可以按页面换成各自的筛选项
-    val quickFilters = listOf("全部", "最近 7 天", "异常", "待处理", "已完成")
-    // 展开按钮的箭头：收起时朝下（90°），展开时翻上去朝上（270°）
-    val filterArrow by animateFloatAsState(
-        targetValue = if (filtersOpen) 270f else 90f,
-        animationSpec = tween(durationMillis = 220),
-        label = "filterArrow"
-    )
     // 展开进度：同时驱动标题框收缩、输入框展开的宽度与透明度
     val searchExpand by animateFloatAsState(
         targetValue = if (searching) 1f else 0f,
@@ -196,9 +172,6 @@ fun MainScreen() {
             focusManager.clearFocus()
             keyboard?.hide()
             query = ""
-            // 收起搜索时把快捷筛选一并复位
-            filtersOpen = false
-            activeFilter = null
         }
     }
 
@@ -266,19 +239,6 @@ fun MainScreen() {
                 }
             }
 
-            // 快捷筛选展开时铺一层透明遮罩：点面板外的任意地方都收起。
-            // 它排在顶栏之前，所以顶栏、底栏仍能正常响应点击
-            if (filtersOpen) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { filtersOpen = false }
-                )
-            }
-
             // 顶部悬浮层：左侧标题胶囊、右侧搜索按钮。
             // 点搜索后长条从按钮左侧往左展开，标题胶囊同步收缩成一个圆球
             BoxWithConstraints(
@@ -332,8 +292,6 @@ fun MainScreen() {
                                     value = query,
                                     onValueChange = {
                                         query = it
-                                        // 手动改输入时取消标签选中，避免两边不一致
-                                        activeFilter = null
                                     },
                                     singleLine = true,
                                     textStyle = MiuixTheme.textStyles.body2.copy(
@@ -357,52 +315,6 @@ fun MainScreen() {
                                         innerTextField()
                                     }
                                 )
-                                // 无边框展开按钮：点一下就把下面的快捷筛选拉出来
-                                Box(
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) { filtersOpen = !filtersOpen },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Image(
-                                        imageVector = MiuixIcons.Regular.ChevronForward,
-                                        contentDescription = if (filtersOpen) "收起快捷筛选" else "展开快捷筛选",
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .graphicsLayer { rotationZ = filterArrow },
-                                        colorFilter = ColorFilter.tint(
-                                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                        )
-                                    )
-                                }
-                            }
-
-                            // 快捷筛选：预设标签，点一下回填到输入框，再点一下取消
-                            AnimatedVisibility(
-                                visible = filtersOpen,
-                                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-                                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
-                            ) {
-                                FlowRow(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 14.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    quickFilters.forEach { label ->
-                                        QuickFilterChip(
-                                            label = label,
-                                            selected = activeFilter == label
-                                        ) {
-                                            activeFilter = if (activeFilter == label) null else label
-                                            query = activeFilter ?: ""
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -414,9 +326,8 @@ fun MainScreen() {
                 GlassButton(
                     backdrop = contentBackdrop,
                     onClick = {
-                        // 点标题即收起搜索与快捷筛选，回到普通顶栏
+                        // 点标题即收起搜索，回到普通顶栏
                         searching = false
-                        filtersOpen = false
                     },
                     // 固定 32dp 圆角：64dp 高下正好是胶囊，与搜索条材质一致
                     shape = searchShape,
@@ -518,7 +429,6 @@ fun MainScreen() {
                     // 不再等翻页动画停稳（settledPage 会滞后整段滚动时间，造成延迟）
                     selectedIndex = { pagerState.targetPage },
                     onSelected = { index ->
-                        filtersOpen = false
                         scope.launch { pagerState.animateScrollToPage(index) }
                     },
                     backdrop = glassBackdrop,
@@ -529,7 +439,6 @@ fun MainScreen() {
                     items.forEachIndexed { index, label ->
                         FloatingBottomBarItem(
                             onClick = {
-                                filtersOpen = false
                                 scope.launch { pagerState.animateScrollToPage(index) }
                             },
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp)
@@ -549,8 +458,7 @@ fun MainScreen() {
                     icon = MiuixIcons.Regular.Add,
                     contentDescription = "添加"
                 ) {
-                    // 具体添加逻辑待接入；顺手收起快捷筛选
-                    filtersOpen = false
+                    // 具体添加逻辑待接入
                 }
             }
         }
@@ -562,49 +470,5 @@ fun MainScreen() {
 fun MainScreenPreview() {
     HCtoolTheme {
         MainScreen()
-    }
-}
-
-/**
- * 搜索面板里的快捷筛选胶囊：无边框，选中后换成主题色
- *
- * @param label 标签文字
- * @param selected 是否已选中
- * @param onClick 点击回调
- */
-@Composable
-private fun QuickFilterChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(Capsule())
-            .background(
-                if (selected) {
-                    MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)
-                } else {
-                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                }
-            )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            )
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MiuixTheme.textStyles.body2,
-            color = if (selected) {
-                MiuixTheme.colorScheme.primary
-            } else {
-                MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-            },
-            maxLines = 1
-        )
     }
 }

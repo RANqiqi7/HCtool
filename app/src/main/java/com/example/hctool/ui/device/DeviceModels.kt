@@ -81,14 +81,31 @@ fun extractSequence(number: String): String? {
  * 用 Compose 可观察集合，任何增删改都会自动触发界面刷新。
  */
 class DeviceStore {
-    /** 所有地图，初始给一张 4x4 的主地图 */
-    val maps = mutableStateListOf(DeviceMap(id = newId(), name = "主地图", rows = 4, cols = 4))
+    /** 预置三张地图，便于测试多地图平铺切换与地图名联动 */
+    private val mainMap = DeviceMap(id = newId(), name = "主地图", rows = 4, cols = 4)
+    private val hallMap = DeviceMap(id = newId(), name = "一厅", rows = 3, cols = 5)
+    private val labMap = DeviceMap(id = newId(), name = "实验室", rows = 5, cols = 6)
 
-    /** 所有设备（跨地图） */
-    val devices = mutableStateListOf<Device>()
+    /** 所有地图 */
+    val maps = mutableStateListOf(mainMap, hallMap, labMap)
+
+    /** 所有设备（跨地图）：预置一批测试数据，覆盖两种状态与多张地图 */
+    val devices = mutableStateListOf(
+        Device(newId(), "采集盒 A", "SB01", "HC-100", status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 0),
+        Device(newId(), "采集盒 B", "SB02", "HC-100", status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 5),
+        Device(newId(), "网关", "GW07", "HC-G2", status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 6),
+        Device(newId(), "温控器", "DEV-12", "HC-T3", status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 10),
+        Device(newId(), "一厅相机", "CAM03", "HC-C1", status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 2),
+        Device(newId(), "一厅音箱", "SPK04", "HC-S1", status = DeviceStatus.IN_USE, mapId = hallMap.id, cell = 7),
+        Device(newId(), "一厅屏控", "CTL05", "HC-P1", status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 11),
+        Device(newId(), "实验台 A", "LAB01", "HC-L1", status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 4),
+        Device(newId(), "实验台 B", "LAB02", "HC-L1", status = DeviceStatus.IDLE, mapId = labMap.id, cell = 9),
+        Device(newId(), "示波器", "SCO06", "HC-O1", status = DeviceStatus.IDLE, mapId = labMap.id, cell = 17),
+        Device(newId(), "频谱仪", "SPA08", "HC-F1", status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 23),
+    )
 
     /** 当前选中的地图 id */
-    var selectedMapId by mutableStateOf(maps.first().id)
+    var selectedMapId by mutableStateOf(mainMap.id)
 
     /** 当前选中的地图对象 */
     val selectedMap: DeviceMap

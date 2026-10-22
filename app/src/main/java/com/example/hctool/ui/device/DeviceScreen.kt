@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -26,6 +29,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,20 +48,32 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hctool.ui.components.frostedSurface
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Edit
+import top.yukonga.miuix.kmp.icon.extended.Filter
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 设备页：顶部「设备地图」框（标题 + 编辑按钮 + 网格地图），
- * 框外下方是纯文字副标题栏「设备列表」，再往下是展示每台设备的瀑布流卡片。
+ * 框外下方是磨砂外框副标题栏「设备列表」（右侧筛选按钮），再往下是展示每台设备的瀑布流卡片。
+ * 筛选列表挂在根 Box 上叠加弹出：副标题栏在屏幕上半部分时向下展开、反之向上，
+ * 边框不超过悬浮顶栏与底栏；标签按组平铺（组间分割线），不挤压下方卡片。
  *
  * @param store     设备数据（提升到 pager 外层持有）
  * @param backdrop  玻璃采样源（用 imageBackdrop，只采背景图）
@@ -72,6 +93,24 @@ fun DeviceScreen(
     var addDialogCell by remember { mutableStateOf<Int?>(null) }
     // 地图编辑弹框开关
     var editOpen by remember { mutableStateOf(false) }
+    // 筛选：null = 不筛选（显示全部地图的全部设备）
+    var activeFilter by remember { mutableStateOf<FilterTag?>(null) }
+    // 筛选下拉列表开关
+    var filterMenuOpen by remember { mutableStateOf(false) }
+    // 记录副标题栏顶 / 底边在整页中的 y 坐标，用于判断筛选列表展开方向与钉位
+    var headerTop by remember { mutableStateOf(0.dp) }
+    var headerBottom by remember { mutableStateOf(0.dp) }
+    // 记录整页高度，用于判断上 / 下半部分与列表可用最大高度
+    var rootH by remember { mutableStateOf(0.dp) }
+    // 筛选列表的数据源：真实设备名称与真实地图名称，有多少显示多少
+    val deviceNames = store.devices.map { it.nickname }.distinct()
+    val mapNames = store.maps.map { it.name }.distinct()
+    // 筛选列表三组：状态 / 设备名称 / 地图名称，组间用分割线隔开
+    val filterGroups = listOf(
+        listOf(FilterTag(0, "空闲"), FilterTag(0, "使用中")),
+        deviceNames.map { FilterTag(1, it) },
+        mapNames.map { FilterTag(2, it) },
+    )
 
     // 任一子级弹窗打开时通知外层锁定主界面左右切页
     LaunchedEffect(editOpen, addDialogCell) {
@@ -81,11 +120,42 @@ fun DeviceScreen(
     val map = store.selectedMap
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val density = LocalDensity.current
 
-    Box(modifier = modifier.fillMaxSize()) {
+    // 未筛选 = 全部地图的全部设备；筛选后 = 对应筛选结果
+    val allDevices = store.devices
+    val shownDevices: List<Device> = when (val f = activeFilter) {
+        null -> allDevices.toList()
+        else -> allDevices.filter { matchFilter(f, it, store) }
+    }
+
+    // 展开方向：副标题栏中心在屏幕上半部分 → 向下展开，反之向上
+    val headerCenter = (headerTop + headerBottom) / 2
+    val expandDown = headerCenter <= rootH / 2
+    // 筛选列表边框的上下界限：不越过悬浮顶栏与底栏（与 Column 让开浮层的内边距同基准）
+    val topLimit = statusTop + 90.dp
+    val bottomLimit = rootH - navBottom - 120.dp
+    // 向下 / 向上展开时各自的可用最大高度，保证列表边框落在上下底栏之间
+    val panelMaxH = (if (expandDown) bottomLimit - headerBottom - 6.dp else headerTop - 6.dp - topLimit)
+        .coerceAtLeast(120.dp)
+
+    // 设备内容采样层：单独记录「设备地图框 + 设备列表」这一层，供筛选列表玻璃采样，
+    // 让筛选列表展开时能把这些组件一起磨进背景（而不只是背景图）。
+    // 筛选列表是本层的兄弟节点（排在其后绘制），不会自采样导致崩溃
+    val deviceContentBackdrop = rememberLayerBackdrop { drawContent() }
+    // 筛选列表玻璃的采样源：背景图 + 设备内容
+    val filterBackdrop = rememberCombinedBackdrop(backdrop, deviceContentBackdrop)
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onSizeChanged { rootH = with(density) { it.height.toDp() } }
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // 记录设备地图框 + 设备列表这一层，供筛选列表玻璃采样
+                .layerBackdrop(deviceContentBackdrop)
                 .verticalScroll(rememberScrollState())
                 // 顶部让开悬浮标题胶囊，底部让开悬浮底栏
                 .padding(top = statusTop + 90.dp)
@@ -111,18 +181,79 @@ fun DeviceScreen(
                 }
             )
 
-            // 副标题栏：纯文字「设备列表」
-            Text(
-                text = "设备列表",
-                style = MiuixTheme.textStyles.title3,
-                color = MiuixTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-            )
+            // 副标题栏：磨砂圆角外框「设备列表」居左，框内右侧筛选按钮；
+            // 筛选列表挂在根 Box 上叠加显示，不参与这里的高度，不会把卡片挤下去
+            Box(modifier = Modifier.fillMaxWidth()) {
+                DeviceListHeader(
+                    backdrop = backdrop,
+                    inPreview = inPreview,
+                    filterActive = activeFilter != null,
+                    onToggleFilter = { filterMenuOpen = !filterMenuOpen },
+                    onPositionChanged = { top, bottom ->
+                        headerTop = top
+                        headerBottom = bottom
+                    }
+                )
+            }
 
             DeviceMasonry(
-                devices = store.devicesOf(map.id),
+                devices = shownDevices,
                 backdrop = backdrop,
                 inPreview = inPreview
+            )
+        }
+
+        // 筛选列表展开时铺一层透明遮罩：点列表外任意处平滑收起。
+        // 排在 Column 之后，盖住整页内容但排在筛选列表之下
+        if (filterMenuOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { filterMenuOpen = false }
+            )
+        }
+
+        // 筛选列表：挂在根 Box 上叠加显示（根 Box 已 fillMaxSize，不会挤压下方卡片）。
+        // 副标题栏在屏幕上半部分时钉在其正下方往下展开，反之钉在其正上方往上展开；
+        // 高度被钳制在上下底栏之间。出现 / 关闭都带平滑效果，展开方向与钉位同向。
+        // 用全限定名调顶层 AnimatedVisibility：本页外层是 Column，
+        // 导入后会优先匹配到 ColumnScope 的重载而报隐式接收者错误
+        androidx.compose.animation.AnimatedVisibility(
+            visible = filterMenuOpen,
+            enter = fadeIn(tween(160)) + expandVertically(
+                expandFrom = if (expandDown) Alignment.Top else Alignment.Bottom,
+                animationSpec = tween(160)
+            ),
+            exit = fadeOut(tween(140)) + shrinkVertically(
+                shrinkTowards = if (expandDown) Alignment.Top else Alignment.Bottom,
+                animationSpec = tween(140)
+            ),
+            modifier = if (expandDown) {
+                Modifier
+                    .align(Alignment.TopEnd)
+                    // 与 Column 的 20dp 水平内边距对齐，右边线跟筛选按钮齐平
+                    .offset(x = -20.dp, y = headerBottom + 6.dp)
+            } else {
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    // 向上展开：底边钉在副标题栏顶边上方 6dp
+                    .offset(x = -20.dp, y = headerTop - 6.dp - rootH)
+            }
+        ) {
+            FilterMenu(
+                backdrop = filterBackdrop,
+                inPreview = inPreview,
+                groups = filterGroups,
+                active = activeFilter,
+                maxHeight = panelMaxH,
+                onPick = { tag ->
+                    // 再点已选中标签 = 取消筛选
+                    activeFilter = if (activeFilter == tag) null else tag
+                    filterMenuOpen = false
+                }
             )
         }
 
@@ -249,28 +380,49 @@ private fun MapPager(
     // 用户滑动翻页 → 回写 store，驱动标题/设备列表同步
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { page ->
-            val id = maps[page.mod(size)].id
+            // 现取地图数：本 effect 只启动一次，不能用外部捕获的旧 size，
+            // 否则增删地图后取余永远按旧数量算，滑动时地图名不会变
+            val count = maps.size
+            val id = maps[page.mod(count)].id
             if (id != store.selectedMapId) store.selectMap(id)
         }
     }
 
-    HorizontalPager(
-        state = pagerState,
-        modifier = Modifier.fillMaxWidth(),
-        // 页间距：左右切换时相邻网格不贴在一起
-        pageSpacing = 16.dp
-    ) { page ->
-        GridMap(
-            map = maps[page.mod(size)],
-            store = store,
-            pendingCell = pendingCell,
-            onCellClick = onCellClick
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val spacing = 6.dp
+        // 当前宽度下某张地图网格的自然高度：方格按行铺满
+        fun heightOf(m: DeviceMap): Dp {
+            val cell = (maxWidth - spacing * (m.cols - 1f)) / m.cols.toFloat()
+            return cell * m.rows.toFloat() + spacing * (m.rows - 1f)
+        }
+        // 不同规格地图切换后平滑收缩/拉长，避免外框突然跳变
+        val gridHeight by animateDpAsState(
+            targetValue = heightOf(store.selectedMap),
+            animationSpec = tween(durationMillis = 240),
+            label = "gridHeight"
         )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(gridHeight),
+            // 页间距：左右切换时相邻网格不贴在一起
+            pageSpacing = 16.dp
+        ) { page ->
+            GridMap(
+                map = maps[page.mod(size)],
+                store = store,
+                pendingCell = pendingCell,
+                onCellClick = onCellClick,
+                height = gridHeight
+            )
+        }
     }
 }
 
 /**
- * 点阵网格地图：按地图行列铺满，每格正方形。
+ * 点阵网格地图：按地图行列铺满；行高由容器高度反算，
+ * 收缩/拉长动画期间格子随之伸缩，停稳后恢复正方形。
  */
 @Composable
 private fun GridMap(
@@ -278,22 +430,26 @@ private fun GridMap(
     store: DeviceStore,
     pendingCell: Int?,
     onCellClick: (Int) -> Unit,
+    height: Dp,
 ) {
+    val spacing = 6.dp
+    // 行高由容器高度反算：动画期间格子被拉伸，停稳后正好是方格
+    val cellHeight = (height - spacing * (map.rows - 1f)) / map.rows.toFloat()
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(spacing)
     ) {
         repeat(map.rows) { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(spacing)
             ) {
                 repeat(map.cols) { col ->
                     val cell = row * map.cols + col
                     GridCell(
                         modifier = Modifier
                             .weight(1f)
-                            .aspectRatio(1f),
+                            .height(cellHeight),
                         device = store.deviceAt(map.id, cell),
                         armed = pendingCell == cell,
                         onClick = { onCellClick(cell) }
@@ -461,6 +617,172 @@ private fun DeviceCard(
                     .aspectRatio(ratio)
                     .clip(RoundedCornerShape(14.dp)),
                 contentScale = ContentScale.Crop
+            )
+        }
+    }
+}
+
+/** 筛选标签：group 区分类型（0 状态 / 1 设备名称 / 2 地图名称），label 为显示与匹配文本 */
+private data class FilterTag(val group: Int, val label: String)
+
+/** 按筛选标签过滤单台设备 */
+private fun matchFilter(f: FilterTag, d: Device, store: DeviceStore): Boolean = when (f.group) {
+    0 -> d.status == (if (f.label == "空闲") DeviceStatus.IDLE else DeviceStatus.IN_USE)
+    1 -> d.nickname == f.label
+    else -> store.maps.firstOrNull { it.id == d.mapId }?.name == f.label
+}
+
+/**
+ * 「设备列表」副标题栏：磨砂玻璃圆角外框、文字居左，框内右侧一个筛选按钮。
+ * 外框 fillMaxWidth，与上方「设备地图」框水平对齐。
+ */
+@Composable
+private fun DeviceListHeader(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    filterActive: Boolean,
+    onToggleFilter: () -> Unit,
+    onPositionChanged: (Dp, Dp) -> Unit,
+) {
+    val density = LocalDensity.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // 回报顶 / 底边在整页中的 y 坐标，供筛选列表定向与定位
+            .onGloballyPositioned {
+                val bounds = it.boundsInRoot()
+                onPositionChanged(
+                    with(density) { bounds.top.toDp() },
+                    with(density) { bounds.bottom.toDp() }
+                )
+            }
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(22.dp),
+                inPreview = inPreview
+            )
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "设备列表",
+            style = MiuixTheme.textStyles.title3,
+            color = MiuixTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        // 筛选按钮：纯图标，不带圆形按钮框
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggleFilter
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                imageVector = MiuixIcons.Regular.Filter,
+                contentDescription = "筛选",
+                modifier = Modifier.size(20.dp),
+                colorFilter = ColorFilter.tint(
+                    if (filterActive) {
+                        MiuixTheme.colorScheme.primary
+                    } else {
+                        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                    }
+                )
+            )
+        }
+    }
+}
+
+/**
+ * 筛选下拉列表：标签按组平铺（状态 / 设备名称 / 地图名称），组间用分割线隔开，不做子级列表；
+ * 选中项高亮并显示对号；高度超过 maxHeight 时内部上下滚动。
+ *
+ * @param maxHeight 可用最大高度（由调用方按上下底栏界限钳制）
+ */
+@Composable
+private fun FilterMenu(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    groups: List<List<FilterTag>>,
+    active: FilterTag?,
+    maxHeight: Dp,
+    onPick: (FilterTag) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .width(230.dp)
+            .heightIn(max = maxHeight)
+            .clip(RoundedCornerShape(20.dp))
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(20.dp),
+                inPreview = inPreview
+            )
+            .padding(vertical = 6.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        groups.forEachIndexed { gi, group ->
+            // 不同筛选类型之间用分割线隔开
+            if (gi > 0) MenuDivider()
+            group.forEach { tag ->
+                FilterRow(text = tag.label, selected = tag == active) { onPick(tag) }
+            }
+        }
+    }
+}
+
+/** 筛选面板里的分割线 */
+@Composable
+private fun MenuDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.15f))
+    )
+}
+
+/** 筛选面板里的一行标签：选中时高亮并显示对号 */
+@Composable
+private fun FilterRow(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.body1,
+            color = if (selected) {
+                MiuixTheme.colorScheme.primary
+            } else {
+                MiuixTheme.colorScheme.onSurface
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (selected) {
+            Image(
+                imageVector = MiuixIcons.Regular.Ok,
+                contentDescription = "已选",
+                modifier = Modifier.size(16.dp),
+                colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
             )
         }
     }
