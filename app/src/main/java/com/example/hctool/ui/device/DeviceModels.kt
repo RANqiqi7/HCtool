@@ -26,6 +26,21 @@ val StatusInUseColor = Color(0xFF0A84FF)
 val DeviceBlockColor = Color(0xFF34C759)
 
 /**
+ * 设备正在测试的一条关联订单（对应「关联订单列表」里的一根长条）。
+ *
+ * @param orderNo     订单号
+ * @param sampleBatch 样品批次
+ * @param boxInDate   样品入箱日期
+ * @param boxOutDate  样品出箱日期
+ */
+data class DeviceOrder(
+    val orderNo: String,
+    val sampleBatch: String,
+    val boxInDate: String,
+    val boxOutDate: String,
+)
+
+/**
  * 一台设备。
  *
  * @param nickname 设备昵称（卡片主标题、网格色块内文字）
@@ -35,6 +50,15 @@ val DeviceBlockColor = Color(0xFF34C759)
  * @param status   运行状态
  * @param mapId    所属地图 id
  * @param cell     在地图网格中的位置（row * cols + col）
+ *
+ * 以下为设备详情页展示字段（均有默认值，新增设备时可不填）：
+ * @param pendingFormCount     待完成表单数量
+ * @param completedFormCount   已完成表单数量
+ * @param totalFormCount       表单总数
+ * @param testingSampleBatches 在测样品批数
+ * @param lastRunTime          上次运行时间（展示用字符串）
+ * @param currentOrders        正在测试的关联订单（使用中状态展示）
+ * @param historyOrders        历史测过的订单号（空闲状态展开查看）
  */
 data class Device(
     val id: String,
@@ -45,6 +69,13 @@ data class Device(
     val status: DeviceStatus = DeviceStatus.IDLE,
     val mapId: String,
     val cell: Int,
+    val pendingFormCount: Int = 0,
+    val completedFormCount: Int = 0,
+    val totalFormCount: Int = 0,
+    val testingSampleBatches: Int = 0,
+    val lastRunTime: String = "",
+    val currentOrders: List<DeviceOrder> = emptyList(),
+    val historyOrders: List<String> = emptyList(),
 )
 
 /**
@@ -89,19 +120,102 @@ class DeviceStore {
     /** 所有地图 */
     val maps = mutableStateListOf(mainMap, hallMap, labMap)
 
-    /** 所有设备（跨地图）：预置一批测试数据，覆盖两种状态与多张地图 */
+    /** 所有设备（跨地图）：预置一批测试数据，覆盖两种状态与多张地图，并填充详情页字段 */
     val devices = mutableStateListOf(
-        Device(newId(), "采集盒 A", "SB01", "HC-100", status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 0),
-        Device(newId(), "采集盒 B", "SB02", "HC-100", status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 5),
-        Device(newId(), "网关", "GW07", "HC-G2", status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 6),
-        Device(newId(), "温控器", "DEV-12", "HC-T3", status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 10),
-        Device(newId(), "一厅相机", "CAM03", "HC-C1", status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 2),
-        Device(newId(), "一厅音箱", "SPK04", "HC-S1", status = DeviceStatus.IN_USE, mapId = hallMap.id, cell = 7),
-        Device(newId(), "一厅屏控", "CTL05", "HC-P1", status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 11),
-        Device(newId(), "实验台 A", "LAB01", "HC-L1", status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 4),
-        Device(newId(), "实验台 B", "LAB02", "HC-L1", status = DeviceStatus.IDLE, mapId = labMap.id, cell = 9),
-        Device(newId(), "示波器", "SCO06", "HC-O1", status = DeviceStatus.IDLE, mapId = labMap.id, cell = 17),
-        Device(newId(), "频谱仪", "SPA08", "HC-F1", status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 23),
+        Device(
+            newId(), "采集盒 A", "SB01", "HC-100",
+            status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 0,
+            pendingFormCount = 0, completedFormCount = 18, totalFormCount = 18,
+            testingSampleBatches = 0, lastRunTime = "2026-10-20 16:42",
+            historyOrders = listOf("DD-240913", "DD-240827", "DD-240715", "DD-240603")
+        ),
+        Device(
+            newId(), "采集盒 B", "SB02", "HC-100",
+            status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 5,
+            pendingFormCount = 3, completedFormCount = 12, totalFormCount = 15,
+            testingSampleBatches = 2, lastRunTime = "2026-10-23 09:15",
+            currentOrders = listOf(
+                DeviceOrder("DD-241021", "P2410-A", "2026-10-21", "2026-10-28"),
+                DeviceOrder("DD-241018", "P2410-B", "2026-10-18", "2026-10-30")
+            ),
+            historyOrders = listOf("DD-240930", "DD-240902")
+        ),
+        Device(
+            newId(), "网关", "GW07", "HC-G2",
+            status = DeviceStatus.IDLE, mapId = mainMap.id, cell = 6,
+            pendingFormCount = 1, completedFormCount = 7, totalFormCount = 8,
+            testingSampleBatches = 0, lastRunTime = "2026-10-19 11:03",
+            historyOrders = listOf("DD-240810", "DD-240622")
+        ),
+        Device(
+            newId(), "温控器", "DEV-12", "HC-T3",
+            status = DeviceStatus.IN_USE, mapId = mainMap.id, cell = 10,
+            pendingFormCount = 2, completedFormCount = 9, totalFormCount = 11,
+            testingSampleBatches = 1, lastRunTime = "2026-10-23 08:40",
+            currentOrders = listOf(
+                DeviceOrder("DD-241022", "P2410-C", "2026-10-22", "2026-11-02")
+            ),
+            historyOrders = listOf("DD-240918")
+        ),
+        Device(
+            newId(), "一厅相机", "CAM03", "HC-C1",
+            status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 2,
+            pendingFormCount = 0, completedFormCount = 5, totalFormCount = 5,
+            testingSampleBatches = 0, lastRunTime = "2026-10-15 14:20",
+            historyOrders = listOf("DD-240705", "DD-240518")
+        ),
+        Device(
+            newId(), "一厅音箱", "SPK04", "HC-S1",
+            status = DeviceStatus.IN_USE, mapId = hallMap.id, cell = 7,
+            pendingFormCount = 4, completedFormCount = 6, totalFormCount = 10,
+            testingSampleBatches = 3, lastRunTime = "2026-10-23 07:55",
+            currentOrders = listOf(
+                DeviceOrder("DD-241020", "P2410-D", "2026-10-20", "2026-10-27")
+            ),
+            historyOrders = listOf("DD-240911", "DD-240803")
+        ),
+        Device(
+            newId(), "一厅屏控", "CTL05", "HC-P1",
+            status = DeviceStatus.IDLE, mapId = hallMap.id, cell = 11,
+            pendingFormCount = 0, completedFormCount = 3, totalFormCount = 3,
+            testingSampleBatches = 0, lastRunTime = "2026-10-11 10:08",
+            historyOrders = listOf("DD-240601")
+        ),
+        Device(
+            newId(), "实验台 A", "LAB01", "HC-L1",
+            status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 4,
+            pendingFormCount = 5, completedFormCount = 20, totalFormCount = 25,
+            testingSampleBatches = 4, lastRunTime = "2026-10-23 10:02",
+            currentOrders = listOf(
+                DeviceOrder("DD-241023", "P2410-E", "2026-10-23", "2026-11-05"),
+                DeviceOrder("DD-241019", "P2410-F", "2026-10-19", "2026-10-31")
+            ),
+            historyOrders = listOf("DD-240925", "DD-240907", "DD-240816")
+        ),
+        Device(
+            newId(), "实验台 B", "LAB02", "HC-L1",
+            status = DeviceStatus.IDLE, mapId = labMap.id, cell = 9,
+            pendingFormCount = 2, completedFormCount = 14, totalFormCount = 16,
+            testingSampleBatches = 0, lastRunTime = "2026-10-18 17:30",
+            historyOrders = listOf("DD-240909", "DD-240728", "DD-240615")
+        ),
+        Device(
+            newId(), "示波器", "SCO06", "HC-O1",
+            status = DeviceStatus.IDLE, mapId = labMap.id, cell = 17,
+            pendingFormCount = 0, completedFormCount = 22, totalFormCount = 22,
+            testingSampleBatches = 0, lastRunTime = "2026-10-17 09:48",
+            historyOrders = listOf("DD-240821", "DD-240710")
+        ),
+        Device(
+            newId(), "频谱仪", "SPA08", "HC-F1",
+            status = DeviceStatus.IN_USE, mapId = labMap.id, cell = 23,
+            pendingFormCount = 6, completedFormCount = 11, totalFormCount = 17,
+            testingSampleBatches = 2, lastRunTime = "2026-10-23 08:12",
+            currentOrders = listOf(
+                DeviceOrder("DD-241022", "P2410-G", "2026-10-22", "2026-11-01")
+            ),
+            historyOrders = listOf("DD-240930", "DD-240914", "DD-240806")
+        ),
     )
 
     /** 当前选中的地图 id */
@@ -158,8 +272,12 @@ class DeviceStore {
         selectedMapId = maps[(if (index - 1 < 0) maps.size - 1 else index - 1)].id
     }
 
-    /** 用一份新地图列表整体替换（地图编辑弹窗点保存时调用） */
+    /** 用一份新地图列表整体替换（地图编辑弹窗点保存时调用）；
+     *  被删除地图下的所有设备一并清除，保证网格与设备列表同步 */
     fun replaceMaps(newMaps: List<DeviceMap>, newSelectedId: String) {
+        val keptIds = newMaps.map { it.id }.toSet()
+        // 不在新列表里的地图即被删除：同步移除其下全部设备
+        devices.removeAll { it.mapId !in keptIds }
         maps.clear()
         maps.addAll(newMaps)
         selectedMapId = newSelectedId

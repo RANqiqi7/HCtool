@@ -26,14 +26,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +83,7 @@ fun DeviceScreen(
     inPreview: Boolean,
     modifier: Modifier = Modifier,
     onDialogOpenChange: (Boolean) -> Unit = {},
+    onDeviceClick: (Device) -> Unit = {},
 ) {
     // 第一次点空格子 → 该格进入「待添加」态显示加号；再点加号 → 弹添加框
     var pendingCell by remember { mutableStateOf<Int?>(null) }
@@ -105,11 +103,11 @@ fun DeviceScreen(
     // 筛选列表的数据源：真实设备名称与真实地图名称，有多少显示多少
     val deviceNames = store.devices.map { it.nickname }.distinct()
     val mapNames = store.maps.map { it.name }.distinct()
-    // 筛选列表三组：状态 / 设备名称 / 地图名称，组间用分割线隔开
+    // 筛选列表三组：状态 / 地图名称 / 设备名称（地图名在设备名之前），组间用分割线隔开
     val filterGroups = listOf(
         listOf(FilterTag(0, "空闲"), FilterTag(0, "使用中")),
-        deviceNames.map { FilterTag(1, it) },
         mapNames.map { FilterTag(2, it) },
+        deviceNames.map { FilterTag(1, it) },
     )
 
     // 任一子级弹窗打开时通知外层锁定主界面左右切页
@@ -139,12 +137,12 @@ fun DeviceScreen(
     val panelMaxH = (if (expandDown) bottomLimit - headerBottom - 6.dp else headerTop - 6.dp - topLimit)
         .coerceAtLeast(120.dp)
 
-    // 设备内容采样层：单独记录「设备地图框 + 设备列表」这一层，供筛选列表玻璃采样，
-    // 让筛选列表展开时能把这些组件一起磨进背景（而不只是背景图）。
-    // 筛选列表是本层的兄弟节点（排在其后绘制），不会自采样导致崩溃
+    // 设备内容采样层：单独记录「设备地图框 + 设备列表」这一层，供上层玻璃采样，
+    // 让它们展开时能把这些组件一起磨进背景（而不只是背景图）。
+    // 筛选列表与弹窗都是本层的兄弟节点（排在其后绘制），不会自采样导致崩溃
     val deviceContentBackdrop = rememberLayerBackdrop { drawContent() }
-    // 筛选列表玻璃的采样源：背景图 + 设备内容
-    val filterBackdrop = rememberCombinedBackdrop(backdrop, deviceContentBackdrop)
+    // 上层玻璃（筛选列表 / 弹窗）的统一采样源：背景图 + 设备内容（地图框 + 列表）
+    val combinedBackdrop = rememberCombinedBackdrop(backdrop, deviceContentBackdrop)
 
     Box(
         modifier = modifier
@@ -168,6 +166,7 @@ fun DeviceScreen(
                 backdrop = backdrop,
                 inPreview = inPreview,
                 pendingCell = pendingCell,
+                activeFilter = activeFilter,
                 onEdit = { editOpen = true },
                 onCellClick = { cell ->
                     when {
@@ -199,7 +198,8 @@ fun DeviceScreen(
             DeviceMasonry(
                 devices = shownDevices,
                 backdrop = backdrop,
-                inPreview = inPreview
+                inPreview = inPreview,
+                onDeviceClick = onDeviceClick
             )
         }
 
@@ -223,13 +223,14 @@ fun DeviceScreen(
         // 导入后会优先匹配到 ColumnScope 的重载而报隐式接收者错误
         androidx.compose.animation.AnimatedVisibility(
             visible = filterMenuOpen,
-            enter = fadeIn(tween(160)) + expandVertically(
+            // 纯高度拉伸：内容高度从 0 渐变到满，带动面板上下边框平滑拉长 / 收回，不闪现
+            enter = expandVertically(
                 expandFrom = if (expandDown) Alignment.Top else Alignment.Bottom,
-                animationSpec = tween(160)
+                animationSpec = tween(220)
             ),
-            exit = fadeOut(tween(140)) + shrinkVertically(
+            exit = shrinkVertically(
                 shrinkTowards = if (expandDown) Alignment.Top else Alignment.Bottom,
-                animationSpec = tween(140)
+                animationSpec = tween(200)
             ),
             modifier = if (expandDown) {
                 Modifier
@@ -244,7 +245,7 @@ fun DeviceScreen(
             }
         ) {
             FilterMenu(
-                backdrop = filterBackdrop,
+                backdrop = combinedBackdrop,
                 inPreview = inPreview,
                 groups = filterGroups,
                 active = activeFilter,
@@ -259,7 +260,7 @@ fun DeviceScreen(
 
         if (editOpen) {
             MapEditDialog(
-                backdrop = backdrop,
+                backdrop = combinedBackdrop,
                 inPreview = inPreview,
                 store = store,
                 onDismiss = { editOpen = false }
@@ -268,13 +269,14 @@ fun DeviceScreen(
 
         addDialogCell?.let { cell ->
             AddDeviceDialog(
-                backdrop = backdrop,
+                backdrop = combinedBackdrop,
                 inPreview = inPreview,
                 onDismiss = {
                     addDialogCell = null
                     pendingCell = null
                 },
                 onConfirm = { nickname, number, model, imageUri ->
+                    // 只写数据；关闭由弹窗自己 requestClose 滑出后经 onDismiss 完成
                     store.addDevice(
                         Device(
                             id = DeviceStore.newId(),
@@ -286,8 +288,6 @@ fun DeviceScreen(
                             cell = cell
                         )
                     )
-                    addDialogCell = null
-                    pendingCell = null
                 }
             )
         }
@@ -295,7 +295,7 @@ fun DeviceScreen(
 }
 
 /**
- * 「设备地图」框：左上角标题、右上角编辑按钮，内部其余空间是网格地图。
+ * 「设备地图」框：头部标题居左、右编辑按钮(无圆框)；下方常驻地图名与网格地图。
  */
 @Composable
 private fun DeviceMapCard(
@@ -303,6 +303,7 @@ private fun DeviceMapCard(
     backdrop: Backdrop,
     inPreview: Boolean,
     pendingCell: Int?,
+    activeFilter: FilterTag?,
     onEdit: () -> Unit,
     onCellClick: (Int) -> Unit,
 ) {
@@ -318,24 +319,38 @@ private fun DeviceMapCard(
             .padding(16.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            // 头部：标题居左、右编辑按钮(纯图标无圆框)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
             ) {
                 Text(
                     text = "设备地图",
                     style = MiuixTheme.textStyles.title3,
                     color = MiuixTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.align(Alignment.CenterStart)
                 )
-                GlassIconButton(
-                    backdrop = backdrop,
-                    icon = MiuixIcons.Regular.Edit,
-                    contentDescription = "编辑地图",
-                    onClick = onEdit,
-                    size = 40.dp,
-                    frosted = true
-                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(40.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onEdit
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        imageVector = MiuixIcons.Regular.Edit,
+                        contentDescription = "编辑地图",
+                        modifier = Modifier.size(20.dp),
+                        colorFilter = ColorFilter.tint(
+                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                        )
+                    )
+                }
             }
             // 当前地图名 + 规格，方便区分多张地图
             Text(
@@ -346,6 +361,7 @@ private fun DeviceMapCard(
             MapPager(
                 store = store,
                 pendingCell = pendingCell,
+                activeFilter = activeFilter,
                 onCellClick = onCellClick
             )
         }
@@ -361,6 +377,7 @@ private fun DeviceMapCard(
 private fun MapPager(
     store: DeviceStore,
     pendingCell: Int?,
+    activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
 ) {
     val maps = store.maps
@@ -413,6 +430,7 @@ private fun MapPager(
                 map = maps[page.mod(size)],
                 store = store,
                 pendingCell = pendingCell,
+                activeFilter = activeFilter,
                 onCellClick = onCellClick,
                 height = gridHeight
             )
@@ -429,6 +447,7 @@ private fun GridMap(
     map: DeviceMap,
     store: DeviceStore,
     pendingCell: Int?,
+    activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
     height: Dp,
 ) {
@@ -446,12 +465,17 @@ private fun GridMap(
             ) {
                 repeat(map.cols) { col ->
                     val cell = row * map.cols + col
+                    val device = store.deviceAt(map.id, cell)
                     GridCell(
                         modifier = Modifier
                             .weight(1f)
                             .height(cellHeight),
-                        device = store.deviceAt(map.id, cell),
+                        device = device,
                         armed = pendingCell == cell,
+                        // 选中筛选标签时：不匹配的设备色块降透明度，突出筛选结果
+                        dimmed = device != null &&
+                            activeFilter != null &&
+                            !matchFilter(activeFilter, device, store),
                         onClick = { onCellClick(cell) }
                     )
                 }
@@ -462,15 +486,17 @@ private fun GridMap(
 
 /**
  * 单个网格格子：
- * - 有设备 → 绿色圆角色块 + 设备名称
+ * - 有设备 → 绿色圆角色块，内部双行：第一行设备名称、第二行设备序号
  * - 待添加（已点过一次）→ 显示加号
  * - 空 → 淡淡的底色
+ * - dimmed（筛选不匹配）→ 色块与文字降透明度，突出筛选出的设备
  */
 @Composable
 private fun GridCell(
     modifier: Modifier = Modifier,
     device: Device?,
     armed: Boolean,
+    dimmed: Boolean = false,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(10.dp)
@@ -479,7 +505,11 @@ private fun GridCell(
             .clip(shape)
             .background(
                 when {
-                    device != null -> DeviceBlockColor
+                    device != null -> if (dimmed) {
+                        DeviceBlockColor.copy(alpha = 0.3f)
+                    } else {
+                        DeviceBlockColor
+                    }
                     armed -> MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)
                     // 空格子底色稍明显一点，保证点阵网格清晰可见
                     else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.10f)
@@ -493,15 +523,28 @@ private fun GridCell(
         contentAlignment = Alignment.Center
     ) {
         when {
-            device != null -> Text(
-                text = device.nickname,
-                style = MiuixTheme.textStyles.body2,
-                color = Color.White,
-                fontSize = 11.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(2.dp)
-            )
+            device != null -> Column(
+                modifier = Modifier.padding(2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = device.nickname,
+                    style = MiuixTheme.textStyles.body2,
+                    color = Color.White.copy(alpha = if (dimmed) 0.5f else 1f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                // 第二行序号：与设备列表卡片同一套正则提取规则
+                Text(
+                    text = extractSequence(device.number)?.let { "序号 $it" } ?: "未编号",
+                    style = MiuixTheme.textStyles.body2,
+                    color = Color.White.copy(alpha = if (dimmed) 0.4f else 0.75f),
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             armed -> Image(
                 imageVector = MiuixIcons.Regular.Add,
                 contentDescription = "添加设备",
@@ -520,6 +563,7 @@ private fun DeviceMasonry(
     devices: List<Device>,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onDeviceClick: (Device) -> Unit,
 ) {
     if (devices.isEmpty()) {
         Text(
@@ -540,13 +584,13 @@ private fun DeviceMasonry(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            left.forEach { DeviceCard(it, backdrop, inPreview) }
+            left.forEach { DeviceCard(it, backdrop, inPreview, onDeviceClick) }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            right.forEach { DeviceCard(it, backdrop, inPreview) }
+            right.forEach { DeviceCard(it, backdrop, inPreview, onDeviceClick) }
         }
     }
 }
@@ -562,11 +606,14 @@ private fun DeviceCard(
     device: Device,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onClick: (Device) -> Unit,
 ) {
     val bitmap = rememberImageBitmap(device.imageUri)
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
+            .pressable(onClick = { onClick(device) })
             .frostedSurface(
                 backdrop = backdrop,
                 shape = RoundedCornerShape(22.dp),
@@ -576,18 +623,7 @@ private fun DeviceCard(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (device.status == DeviceStatus.IN_USE) {
-                            StatusInUseColor
-                        } else {
-                            StatusIdleColor
-                        }
-                    )
-            )
+            StatusDot(device.status)
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = device.nickname,

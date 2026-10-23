@@ -62,8 +62,17 @@ import com.example.hctool.ui.components.FloatingBottomBarItem
 import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.GlassFab
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.device.Device
+import com.example.hctool.ui.device.DeviceDetailScreen
 import com.example.hctool.ui.device.DeviceScreen
 import com.example.hctool.ui.device.rememberDeviceStore
+import com.example.hctool.ui.order.AddOrderDialog
+import com.example.hctool.ui.order.Order
+import com.example.hctool.ui.order.OrderScreen
+import com.example.hctool.ui.order.OrderStatus
+import com.example.hctool.ui.order.OrderStore
+import com.example.hctool.ui.order.currentSubmitTime
+import com.example.hctool.ui.order.rememberOrderStore
 import com.example.hctool.ui.theme.HCtoolTheme
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -114,6 +123,12 @@ fun MainScreen() {
     val deviceStore = rememberDeviceStore()
     // 设备页是否有子级弹窗（新增设备 / 地图编辑）打开：打开时禁止主界面左右滑动切页
     var deviceDialogOpen by remember { mutableStateOf(false) }
+    // 当前打开详情的设备：非空时在设备页之上滑入整屏详情页浮层
+    var detailDevice by remember { mutableStateOf<Device?>(null) }
+    // 订单页数据：提升到 pager 外层持有，翻页销毁重建也不丢数据
+    val orderStore = rememberOrderStore()
+    // 新增订单弹窗开关（订单页点底栏加号弹出）
+    var addOrderOpen by remember { mutableStateOf(false) }
 
     // 翻页 → 同步底栏高亮与顶栏标题
     LaunchedEffect(pagerState) {
@@ -163,12 +178,16 @@ fun MainScreen() {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // 展开后自动聚焦并弹键盘；收起时释放焦点、清空输入
+    // 展开后自动聚焦并弹键盘；仅当搜索真正打开过、收起时才释放焦点/收键盘，
+    // 避免初始或无关重组误调 clearFocus/hide 打断弹窗内输入框的输入法
+    var searchWasOpen by remember { mutableStateOf(false) }
     LaunchedEffect(searching) {
         if (searching) {
+            searchWasOpen = true
             focusRequester.requestFocus()
             keyboard?.show()
-        } else {
+        } else if (searchWasOpen) {
+            searchWasOpen = false
             focusManager.clearFocus()
             keyboard?.hide()
             query = ""
@@ -210,8 +229,8 @@ fun MainScreen() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    // 子级弹窗打开时锁定左右切换，避免误滑到其它页
-                    userScrollEnabled = !deviceDialogOpen
+                    // 子级弹窗 / 设备详情页 / 新增订单弹窗打开时锁定左右切换
+                    userScrollEnabled = !deviceDialogOpen && detailDevice == null && !addOrderOpen
                 ) {
                     page ->
                     if (page == 0) {
@@ -221,6 +240,15 @@ fun MainScreen() {
                             backdrop = imageBackdrop,
                             inPreview = inPreview,
                             onDialogOpenChange = { deviceDialogOpen = it },
+                            onDeviceClick = { detailDevice = it },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (page == 1) {
+                        // 订单页：订单列表瀑布流（进行中优先）
+                        OrderScreen(
+                            store = orderStore,
+                            backdrop = imageBackdrop,
+                            inPreview = inPreview,
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
@@ -458,9 +486,51 @@ fun MainScreen() {
                     icon = MiuixIcons.Regular.Add,
                     contentDescription = "添加"
                 ) {
-                    // 具体添加逻辑待接入
+                    // 订单页：加号弹出新增订单；其它页暂不处理
+                    if (selectedIndex == 1) addOrderOpen = true
                 }
             }
+        }
+
+        // 设备详情页浮层：点击设备卡片后整屏滑入，盖住顶栏 / 底栏；
+        // 浮层在最外层 Box、位于 imageBackdrop 层之外采样，不会自采样导致崩溃
+        detailDevice?.let { device ->
+            DeviceDetailScreen(
+                device = device,
+                store = deviceStore,
+                backdrop = imageBackdrop,
+                inPreview = inPreview,
+                onBack = { detailDevice = null },
+                onEdit = { /* 设备编辑逻辑待接入 */ },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // 新增订单弹窗：订单页点底栏加号弹出；保存时记录提单时间（精确到年月日时分）
+        if (addOrderOpen) {
+            AddOrderDialog(
+                backdrop = contentBackdrop,
+                inPreview = inPreview,
+                onDismiss = { addOrderOpen = false },
+                onConfirm = { orderNo, customer, sampleName, sampleCount, sampleNo, testCondition, caseOwner, imageUri ->
+                    orderStore.addOrder(
+                        Order(
+                            id = OrderStore.newId(),
+                            orderNo = orderNo,
+                            customer = customer,
+                            sampleName = sampleName,
+                            sampleCount = sampleCount,
+                            sampleNo = sampleNo,
+                            testCondition = testCondition,
+                            caseOwner = caseOwner,
+                            imageUri = imageUri,
+                            status = OrderStatus.IN_PROGRESS,
+                            submitTime = currentSubmitTime()
+                        )
+                    )
+                    // 关闭由弹窗自己 requestClose 滑出后经 onDismiss 完成
+                }
+            )
         }
     }
 }

@@ -3,12 +3,18 @@ package com.example.hctool.ui.device
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.app.Activity
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -38,7 +45,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
+import androidx.compose.ui.tooling.preview.Preview
+import com.example.hctool.MainScreen
 import com.example.hctool.ui.components.GlassButton
+import com.example.hctool.ui.theme.HCtoolTheme
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -77,6 +87,57 @@ fun GlassIconButton(
 }
 
 /**
+ * 设备运行状态圆点（与设备卡片上那个一致）：空闲绿 / 使用中蓝。
+ * 详情页头部与列表卡片共用，保证颜色与尺寸一致。
+ */
+@Composable
+fun StatusDot(
+    status: DeviceStatus,
+    modifier: Modifier = Modifier,
+    size: Dp = 10.dp,
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(
+                if (status == DeviceStatus.IN_USE) StatusInUseColor else StatusIdleColor
+            )
+    )
+}
+
+/**
+ * 统一按压反馈：按下轻微收缩、弹簧回弹（与全局玻璃按钮同一套手感）。
+ * 供卡片 / 标题胶囊等大尺寸可点表面复用，保证所有按钮和卡片按压手感一致。
+ *
+ * @param onClick      点击回调
+ * @param pressedScale 按下缩放比例，默认 0.98（大表面用较缓和的收缩）
+ */
+@Composable
+fun Modifier.pressable(
+    onClick: () -> Unit,
+    pressedScale: Float = 0.98f,
+): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) pressedScale else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 900f),
+        label = "pressScale"
+    )
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick
+        )
+}
+
+/**
  * 圆角输入栏（与顶部搜索框同款外观）：提示词作为 placeholder 显示在栏内，
  * 不计入实际输入内容。基于 BasicTextField，聚焦后主动调起软键盘。
  *
@@ -97,13 +158,15 @@ fun DeviceField(
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(focused) {
         if (focused) {
-            // 等输入连接建立后再弹，避免过早调用被忽略
+            // 等输入连接建立后再弹，避免过早调用被忽略；
+            // 只发一次显示请求：重复 show 与外部 hide 竞争会把系统输入法 insets 动画卡死
             delay(60)
-            keyboard?.show()
             val window = (view.context as? Activity)?.window
-            if (window != null) {
-                WindowCompat.getInsetsController(window, view)
-                    .show(WindowInsetsCompat.Type.ime())
+            val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+            if (controller != null) {
+                controller.show(WindowInsetsCompat.Type.ime())
+            } else {
+                keyboard?.show()
             }
         }
     }
