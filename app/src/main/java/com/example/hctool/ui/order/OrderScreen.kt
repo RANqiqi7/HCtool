@@ -35,15 +35,17 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 卡片主标题 = 订单号（不带状态颜色点），副标题 = 订单状态（进行中 / 已完结），
  * 下方与设备卡片一样留有订单图片展示位；进行中订单优先排在前面。
  *
- * @param store     订单数据（提升到 pager 外层持有）
- * @param backdrop  玻璃采样源（用 imageBackdrop，只采背景图）
- * @param inPreview 预览态退化玻璃为纯色
+ * @param store        订单数据（提升到 pager 外层持有）
+ * @param backdrop     玻璃采样源（用 imageBackdrop，只采背景图）
+ * @param inPreview    预览态退化玻璃为纯色
+ * @param onOrderClick 点击某张订单卡片（由 MainActivity 弹出订单详情页）
  */
 @Composable
 fun OrderScreen(
     store: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onOrderClick: (Order) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -62,7 +64,8 @@ fun OrderScreen(
         OrderMasonry(
             orders = store.sortedOrders(),
             backdrop = backdrop,
-            inPreview = inPreview
+            inPreview = inPreview,
+            onOrderClick = onOrderClick
         )
     }
 }
@@ -103,6 +106,7 @@ private fun OrderMasonry(
     orders: List<Order>,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onOrderClick: (Order) -> Unit,
 ) {
     if (orders.isEmpty()) {
         Text(
@@ -123,13 +127,13 @@ private fun OrderMasonry(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            left.forEach { OrderCard(it, backdrop, inPreview) }
+            left.forEach { OrderCard(it, backdrop, inPreview, onOrderClick) }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            right.forEach { OrderCard(it, backdrop, inPreview) }
+            right.forEach { OrderCard(it, backdrop, inPreview, onOrderClick) }
         }
     }
 }
@@ -145,13 +149,14 @@ private fun OrderCard(
     order: Order,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onOrderClick: (Order) -> Unit,
 ) {
     val bitmap = rememberImageBitmap(order.imageUri)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
-            .pressable(onClick = { /* 订单详情待接入 */ })
+            .pressable(onClick = { onOrderClick(order) })
             .frostedSurface(
                 backdrop = backdrop,
                 shape = RoundedCornerShape(22.dp),

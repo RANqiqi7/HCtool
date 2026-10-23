@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,6 +51,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
@@ -73,6 +76,7 @@ import top.yukonga.miuix.kmp.blur.highlight.LightSource
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.sensor.rememberDeviceTilt
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.PI
 import kotlin.math.abs
@@ -454,5 +458,37 @@ fun FloatingBottomBar(
                 )
             }
         }
+    }
+}
+
+/** 底部导航栏 badge 底色：蓝底白字，与项目里进行中状态蓝同一套路 */
+val BadgeBlue = Color(0xFF0A84FF)
+
+/**
+ * 底部导航栏图标右上角的数量 badge（设备=使用中数量、订单=进行中数量、待办=今日待办数量）。
+ * 数量为 0 时不显示；超过 99 显示 99+。非正方形时 CircleShape 自然收成胶囊，适配多位数。
+ *
+ * @param count 要展示的数量
+ */
+@Composable
+fun TabCountBadge(count: Int, modifier: Modifier = Modifier) {
+    if (count <= 0) return
+    val label = if (count > 99) "99+" else "$count"
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+            .clip(CircleShape)
+            .background(BadgeBlue)
+            // 一圈白边把 badge 从玻璃底栏上分出来，多位数变胶囊时也保持轮廓
+            .border(width = 1.dp, color = Color.White, shape = CircleShape)
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.footnote2.copy(fontSize = 9.sp, lineHeight = 12.sp),
+            color = Color.White,
+            maxLines = 1
+        )
     }
 }

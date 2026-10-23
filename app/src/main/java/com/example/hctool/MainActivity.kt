@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -61,18 +62,23 @@ import com.example.hctool.ui.components.FloatingBottomBar
 import com.example.hctool.ui.components.FloatingBottomBarItem
 import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.GlassFab
+import com.example.hctool.ui.components.TabCountBadge
 import com.example.hctool.ui.components.glassSurface
 import com.example.hctool.ui.device.Device
 import com.example.hctool.ui.device.DeviceDetailScreen
 import com.example.hctool.ui.device.DeviceScreen
+import com.example.hctool.ui.device.DeviceStatus
+import com.example.hctool.ui.device.computeStatus
 import com.example.hctool.ui.device.rememberDeviceStore
 import com.example.hctool.ui.order.AddOrderDialog
 import com.example.hctool.ui.order.Order
+import com.example.hctool.ui.order.OrderDetailScreen
 import com.example.hctool.ui.order.OrderScreen
 import com.example.hctool.ui.order.OrderStatus
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.currentSubmitTime
 import com.example.hctool.ui.order.rememberOrderStore
+import com.example.hctool.ui.order.status
 import com.example.hctool.ui.theme.HCtoolTheme
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -129,6 +135,8 @@ fun MainScreen() {
     val orderStore = rememberOrderStore()
     // 新增订单弹窗开关（订单页点底栏加号弹出）
     var addOrderOpen by remember { mutableStateOf(false) }
+    // 当前打开详情的订单：非空时在订单页之上滑入整屏详情页浮层
+    var detailOrder by remember { mutableStateOf<Order?>(null) }
 
     // 翻页 → 同步底栏高亮与顶栏标题
     LaunchedEffect(pagerState) {
@@ -229,14 +237,16 @@ fun MainScreen() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    // 子级弹窗 / 设备详情页 / 新增订单弹窗打开时锁定左右切换
-                    userScrollEnabled = !deviceDialogOpen && detailDevice == null && !addOrderOpen
+                    // 子级弹窗 / 设备详情页 / 订单详情页 / 新增订单弹窗打开时锁定左右切换
+                    userScrollEnabled = !deviceDialogOpen && detailDevice == null &&
+                        detailOrder == null && !addOrderOpen
                 ) {
                     page ->
                     if (page == 0) {
                         // 设备页：设备地图框 + 设备列表瀑布流
                         DeviceScreen(
                             store = deviceStore,
+                            orderStore = orderStore,
                             backdrop = imageBackdrop,
                             inPreview = inPreview,
                             onDialogOpenChange = { deviceDialogOpen = it },
@@ -249,6 +259,7 @@ fun MainScreen() {
                             store = orderStore,
                             backdrop = imageBackdrop,
                             inPreview = inPreview,
+                            onOrderClick = { detailOrder = it },
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
@@ -434,6 +445,12 @@ fun MainScreen() {
         }
 
         // 底部悬浮层：左边是收缩后的玻璃底栏，右边是独立的玻璃加号按钮
+        // 底栏 badge 数量：设备=使用中台数、订单=进行中单数、待办=今日待办数（暂无待办数据，恒 0 不显示）
+        val badges = listOf(
+            deviceStore.devices.count { it.computeStatus(orderStore) == DeviceStatus.IN_USE },
+            orderStore.orders.count { it.status == OrderStatus.IN_PROGRESS },
+            0,
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -471,12 +488,21 @@ fun MainScreen() {
                             },
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp)
                         ) {
-                            // 底栏只保留图标，去掉图标下的文字标题
-                            Icon(
-                                imageVector = icons[index],
-                                contentDescription = label,
-                                tint = MiuixTheme.colorScheme.onSurface
-                            )
+                            // 底栏只保留图标，去掉图标下的文字标题；图标右上角叠数量 badge
+                            // （badge 在选中玻璃 pill 下层，选中页会带一点玻璃折射质感）
+                            Box {
+                                Icon(
+                                    imageVector = icons[index],
+                                    contentDescription = label,
+                                    tint = MiuixTheme.colorScheme.onSurface
+                                )
+                                TabCountBadge(
+                                    count = badges[index],
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 8.dp, y = (-4).dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -498,10 +524,40 @@ fun MainScreen() {
             DeviceDetailScreen(
                 device = device,
                 store = deviceStore,
+                orderStore = orderStore,
                 backdrop = imageBackdrop,
                 inPreview = inPreview,
                 onBack = { detailDevice = null },
                 onEdit = { /* 设备编辑逻辑待接入 */ },
+                // 跨模块跳转不叠浮层：关掉设备详情、把主翻页切到订单页，
+                // 保证订单详情返回时落回订单管理页
+                onOrderClick = { orderNo ->
+                    detailDevice = null
+                    detailOrder = orderStore.getOrAddByOrderNo(orderNo)
+                    scope.launch { pagerState.scrollToPage(1) }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // 订单详情页浮层：点击订单卡片后整屏滑入，盖住顶栏 / 底栏；
+        // 同样位于 imageBackdrop 层之外采样，不会自采样导致崩溃
+        detailOrder?.let { order ->
+            OrderDetailScreen(
+                order = order,
+                store = orderStore,
+                deviceStore = deviceStore,
+                backdrop = imageBackdrop,
+                inPreview = inPreview,
+                onBack = { detailOrder = null },
+                onEdit = { /* 订单编辑逻辑待接入 */ },
+                // 跨模块跳转不叠浮层：关掉订单详情、把主翻页切到设备页，
+                // 保证设备详情返回时落回设备管理页
+                onDeviceClick = { device ->
+                    detailOrder = null
+                    detailDevice = device
+                    scope.launch { pagerState.scrollToPage(0) }
+                },
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -524,7 +580,6 @@ fun MainScreen() {
                             testCondition = testCondition,
                             caseOwner = caseOwner,
                             imageUri = imageUri,
-                            status = OrderStatus.IN_PROGRESS,
                             submitTime = currentSubmitTime()
                         )
                     )

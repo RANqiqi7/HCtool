@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.order.OrderStore
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -72,13 +73,15 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 筛选列表挂在根 Box 上叠加弹出：副标题栏在屏幕上半部分时向下展开、反之向上，
  * 边框不超过悬浮顶栏与底栏；标签按组平铺（组间分割线），不挤压下方卡片。
  *
- * @param store     设备数据（提升到 pager 外层持有）
- * @param backdrop  玻璃采样源（用 imageBackdrop，只采背景图）
- * @param inPreview 预览态退化玻璃为纯色
+ * @param store      设备数据（提升到 pager 外层持有）
+ * @param orderStore 订单数据（设备运行状态由关联订单节点推导，状态圆点 / 筛选都要用）
+ * @param backdrop   玻璃采样源（用 imageBackdrop，只采背景图）
+ * @param inPreview  预览态退化玻璃为纯色
  */
 @Composable
 fun DeviceScreen(
     store: DeviceStore,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
     modifier: Modifier = Modifier,
@@ -124,7 +127,7 @@ fun DeviceScreen(
     val allDevices = store.devices
     val shownDevices: List<Device> = when (val f = activeFilter) {
         null -> allDevices.toList()
-        else -> allDevices.filter { matchFilter(f, it, store) }
+        else -> allDevices.filter { matchFilter(f, it, store, orderStore) }
     }
 
     // 展开方向：副标题栏中心在屏幕上半部分 → 向下展开，反之向上
@@ -163,6 +166,7 @@ fun DeviceScreen(
         ) {
             DeviceMapCard(
                 store = store,
+                orderStore = orderStore,
                 backdrop = backdrop,
                 inPreview = inPreview,
                 pendingCell = pendingCell,
@@ -197,6 +201,7 @@ fun DeviceScreen(
 
             DeviceMasonry(
                 devices = shownDevices,
+                orderStore = orderStore,
                 backdrop = backdrop,
                 inPreview = inPreview,
                 onDeviceClick = onDeviceClick
@@ -300,6 +305,7 @@ fun DeviceScreen(
 @Composable
 private fun DeviceMapCard(
     store: DeviceStore,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
     pendingCell: Int?,
@@ -360,6 +366,7 @@ private fun DeviceMapCard(
             )
             MapPager(
                 store = store,
+                orderStore = orderStore,
                 pendingCell = pendingCell,
                 activeFilter = activeFilter,
                 onCellClick = onCellClick
@@ -376,6 +383,7 @@ private fun DeviceMapCard(
 @Composable
 private fun MapPager(
     store: DeviceStore,
+    orderStore: OrderStore,
     pendingCell: Int?,
     activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
@@ -429,6 +437,7 @@ private fun MapPager(
             GridMap(
                 map = maps[page.mod(size)],
                 store = store,
+                orderStore = orderStore,
                 pendingCell = pendingCell,
                 activeFilter = activeFilter,
                 onCellClick = onCellClick,
@@ -446,6 +455,7 @@ private fun MapPager(
 private fun GridMap(
     map: DeviceMap,
     store: DeviceStore,
+    orderStore: OrderStore,
     pendingCell: Int?,
     activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
@@ -475,7 +485,7 @@ private fun GridMap(
                         // 选中筛选标签时：不匹配的设备色块降透明度，突出筛选结果
                         dimmed = device != null &&
                             activeFilter != null &&
-                            !matchFilter(activeFilter, device, store),
+                            !matchFilter(activeFilter, device, store, orderStore),
                         onClick = { onCellClick(cell) }
                     )
                 }
@@ -561,6 +571,7 @@ private fun GridCell(
 @Composable
 private fun DeviceMasonry(
     devices: List<Device>,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
     onDeviceClick: (Device) -> Unit,
@@ -584,76 +595,13 @@ private fun DeviceMasonry(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            left.forEach { DeviceCard(it, backdrop, inPreview, onDeviceClick) }
+            left.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick) }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            right.forEach { DeviceCard(it, backdrop, inPreview, onDeviceClick) }
-        }
-    }
-}
-
-/**
- * 单张设备卡片：
- * - 主标题 = 设备昵称，左侧一个状态圆点（空闲绿 / 使用中蓝）
- * - 副标题 = 从设备编号正则提取的序号
- * - 有图片则展示图片，无图片则不展示
- */
-@Composable
-private fun DeviceCard(
-    device: Device,
-    backdrop: Backdrop,
-    inPreview: Boolean,
-    onClick: (Device) -> Unit,
-) {
-    val bitmap = rememberImageBitmap(device.imageUri)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
-            .pressable(onClick = { onClick(device) })
-            .frostedSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(22.dp),
-                inPreview = inPreview
-            )
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(device.status)
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = device.nickname,
-                style = MiuixTheme.textStyles.body1,
-                color = MiuixTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-        }
-        val seq = extractSequence(device.number)
-        Text(
-            text = seq?.let { "序号 $it" } ?: "未编号",
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        // 备注图片放在编号下方，高度随图片宽高比自适应（不同卡片高矮错落）
-        if (bitmap != null) {
-            val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
-            Image(
-                bitmap = bitmap,
-                contentDescription = device.nickname,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(ratio)
-                    .clip(RoundedCornerShape(14.dp)),
-                contentScale = ContentScale.Crop
-            )
+            right.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick) }
         }
     }
 }
@@ -662,8 +610,13 @@ private fun DeviceCard(
 private data class FilterTag(val group: Int, val label: String)
 
 /** 按筛选标签过滤单台设备 */
-private fun matchFilter(f: FilterTag, d: Device, store: DeviceStore): Boolean = when (f.group) {
-    0 -> d.status == (if (f.label == "空闲") DeviceStatus.IDLE else DeviceStatus.IN_USE)
+private fun matchFilter(
+    f: FilterTag,
+    d: Device,
+    store: DeviceStore,
+    orderStore: OrderStore,
+): Boolean = when (f.group) {
+    0 -> d.computeStatus(orderStore) == (if (f.label == "空闲") DeviceStatus.IDLE else DeviceStatus.IN_USE)
     1 -> d.nickname == f.label
     else -> store.maps.firstOrNull { it.id == d.mapId }?.name == f.label
 }

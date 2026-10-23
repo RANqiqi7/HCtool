@@ -3,17 +3,32 @@ package com.example.hctool.ui.device
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.app.Activity
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -36,24 +51,27 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
-import androidx.compose.ui.tooling.preview.Preview
-import com.example.hctool.MainScreen
 import com.example.hctool.ui.components.GlassButton
-import com.example.hctool.ui.theme.HCtoolTheme
+import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.order.OrderStore
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -96,14 +114,94 @@ fun StatusDot(
     modifier: Modifier = Modifier,
     size: Dp = 10.dp,
 ) {
+    StatusDot(
+        color = if (status == DeviceStatus.IN_USE) StatusInUseColor else StatusIdleColor,
+        modifier = modifier,
+        size = size
+    )
+}
+
+/**
+ * 直接按颜色画的状态圆点（与设备状态圆点同款尺寸 / 形状）。
+ * 订单进行中蓝 / 已完结绿等场景复用它，保证全站圆点观感一致。
+ */
+@Composable
+fun StatusDot(
+    color: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 10.dp,
+) {
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(
-                if (status == DeviceStatus.IN_USE) StatusInUseColor else StatusIdleColor
-            )
+            .background(color)
     )
+}
+
+/**
+ * 单张设备卡片（首页设备列表与订单详情页「关联设备」共用，保证两处观感完全一致）：
+ * - 主标题 = 设备昵称，左侧一个状态圆点（空闲绿 / 使用中蓝）
+ * - 副标题 = 从设备编号正则提取的序号
+ * - 有图片则展示图片，无图片则不展示
+ */
+@Composable
+fun DeviceCard(
+    device: Device,
+    orderStore: OrderStore,
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    onClick: (Device) -> Unit,
+) {
+    val bitmap = rememberImageBitmap(device.imageUri)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
+            .pressable(onClick = { onClick(device) })
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(22.dp),
+                inPreview = inPreview
+            )
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 运行状态由关联订单是否有测试中节点推导
+            StatusDot(device.computeStatus(orderStore))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = device.nickname,
+                style = MiuixTheme.textStyles.body1,
+                color = MiuixTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        val seq = extractSequence(device.number)
+        Text(
+            text = seq?.let { "序号 $it" } ?: "未编号",
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        // 备注图片放在编号下方，高度随图片宽高比自适应（不同卡片高矮错落）
+        if (bitmap != null) {
+            val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+            Image(
+                bitmap = bitmap,
+                contentDescription = device.nickname,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(ratio)
+                    .clip(RoundedCornerShape(14.dp)),
+                contentScale = ContentScale.Crop
+            )
+        }
+    }
 }
 
 /**
@@ -135,6 +233,163 @@ fun Modifier.pressable(
             indication = null,
             onClick = onClick
         )
+}
+
+/**
+ * 详情页通用信息卡片：磨砂玻璃 + 点击轻微收缩 + 平滑伸缩（点击标题栏展开 / 收起）。
+ * 标题栏右侧可放附加内容（[headerRight]，如「历史订单」、进度环），末尾是一个随展开旋转的箭头。
+ * 设备详情页与订单详情页共用，保证两页卡片观感完全一致。
+ *
+ * @param expanded      是否展开
+ * @param onToggle      点击整卡切换展开 / 收起
+ * @param headerRight   标题与箭头之间的附加内容（可选）
+ * @param previewContent 收起态也常驻的预览内容（不参与展开动画，如关联订单的第一条）
+ * @param content       展开时显示的内容
+ */
+@Composable
+fun DetailCard(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    headerRight: (@Composable RowScope.() -> Unit)? = null,
+    previewContent: (@Composable ColumnScope.() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // 箭头旋转：收起指向右，展开旋转 90° 指向下
+    val chevron by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(durationMillis = 220),
+        label = "detailCardChevron"
+    )
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            // 统一按压反馈（按下轻微收缩）+ 点击切换展开 / 收起
+            .pressable(onClick = onToggle)
+            .clip(RoundedCornerShape(24.dp))
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(24.dp),
+                inPreview = inPreview
+            )
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title,
+                style = MiuixTheme.textStyles.title3,
+                color = MiuixTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            headerRight?.invoke(this)
+            Spacer(modifier = Modifier.width(6.dp))
+            Image(
+                imageVector = MiuixIcons.Regular.ChevronForward,
+                contentDescription = if (expanded) "收起" else "展开",
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = chevron },
+                colorFilter = ColorFilter.tint(
+                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            )
+        }
+        // 收起态也常驻的预览内容：不参与展开动画，保证收起时卡片不空
+        previewContent?.let { preview ->
+            Spacer(modifier = Modifier.height(12.dp))
+            preview()
+        }
+        // 平滑伸缩：展开 / 收起时内容高度从 0 渐变到满，带动卡片上下边框平滑拉长，不闪现
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(200)) + expandVertically(
+                expandFrom = Alignment.Top,
+                animationSpec = tween(240)
+            ),
+            exit = fadeOut(tween(160)) + shrinkVertically(
+                shrinkTowards = Alignment.Top,
+                animationSpec = tween(200)
+            )
+        ) {
+            Column {
+                Spacer(modifier = Modifier.height(12.dp))
+                content()
+            }
+        }
+    }
+}
+
+/** 详情页常驻磨砂卡片外框：只有按压反馈，不带箭头、不可展开（基础信息卡用它）。 */
+@Composable
+fun StaticCard(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .pressable(onClick = { })
+            .clip(RoundedCornerShape(24.dp))
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(24.dp),
+                inPreview = inPreview
+            )
+            .padding(16.dp),
+        content = content
+    )
+}
+
+/** 详情页一行「标签 + 取值」信息：标签居左淡显，取值紧随其后，过长省略。 */
+@Composable
+fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = value,
+            style = MiuixTheme.textStyles.body1,
+            color = MiuixTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/** 详情页卡片内分隔线 */
+@Composable
+fun CardDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+    )
+}
+
+/** 详情页空数据占位提示 */
+@Composable
+fun EmptyHint(text: String) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    )
 }
 
 /**

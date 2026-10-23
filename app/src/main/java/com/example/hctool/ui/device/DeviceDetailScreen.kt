@@ -1,13 +1,7 @@
 package com.example.hctool.ui.device
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,9 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -50,14 +42,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.hctool.R
-import com.example.hctool.ui.components.frostedSurface
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.order.OrderStatus
+import com.example.hctool.ui.order.OrderStore
+import com.example.hctool.ui.order.status
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -67,7 +60,6 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Edit
 import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -88,17 +80,20 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * @param store     设备数据（用于取所属地图名与网格规格）
  * @param backdrop  玻璃采样源（用 imageBackdrop，只采背景图）
  * @param inPreview 预览态退化玻璃为纯色
- * @param onBack    返回（滑出动画结束后回调）
- * @param onEdit    编辑按钮点击（具体编辑逻辑待接入）
+ * @param onBack       返回（滑出动画结束后回调）
+ * @param onEdit       编辑按钮点击（具体编辑逻辑待接入）
+ * @param onOrderClick 点关联订单里的某一条（上抛订单号，由 MainActivity 打开对应订单详情页）
  */
 @Composable
 fun DeviceDetailScreen(
     device: Device,
     store: DeviceStore,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
     onBack: () -> Unit,
     onEdit: () -> Unit,
+    onOrderClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -178,8 +173,10 @@ fun DeviceDetailScreen(
                 )
                 AssociatedOrdersCard(
                     device = device,
+                    orderStore = orderStore,
                     backdrop = backdrop,
-                    inPreview = inPreview
+                    inPreview = inPreview,
+                    onOrderClick = onOrderClick
                 )
                 FormStatusCard(
                     device = device,
@@ -189,6 +186,7 @@ fun DeviceDetailScreen(
                 MoreInfoCard(
                     device = device,
                     store = store,
+                    orderStore = orderStore,
                     backdrop = backdrop,
                     inPreview = inPreview
                 )
@@ -196,6 +194,7 @@ fun DeviceDetailScreen(
             // 悬浮顶栏浮在滚动内容之上：返回 + 标题胶囊(设备名+编号+状态圆点) + 编辑
             DetailTopBar(
                 device = device,
+                orderStore = orderStore,
                 backdrop = combinedBackdrop,
                 inPreview = inPreview,
                 onBack = { requestBack() },
@@ -218,6 +217,7 @@ fun DeviceDetailScreen(
 @Composable
 private fun DetailTopBar(
     device: Device,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
     onBack: () -> Unit,
@@ -269,7 +269,7 @@ private fun DetailTopBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                StatusDot(status = device.status, size = 10.dp)
+                StatusDot(status = device.computeStatus(orderStore), size = 10.dp)
             }
         }
         GlassIconButton(
@@ -278,111 +278,6 @@ private fun DetailTopBar(
             contentDescription = "编辑",
             onClick = onEdit,
             size = 56.dp
-        )
-    }
-}
-
-/**
- * 通用信息卡片：磨砂玻璃 + 点击轻微收缩 + 平滑伸缩（点击标题栏展开 / 收起）。
- * 标题栏右侧可放附加内容（[headerRight]，如「历史订单」），末尾是一个随展开旋转的箭头。
- *
- * @param expanded    是否展开
- * @param onToggle    点击整卡切换展开 / 收起
- * @param headerRight 标题与箭头之间的附加内容（可选）
- * @param content     展开时显示的内容
- */
-@Composable
-private fun DetailCard(
-    backdrop: Backdrop,
-    inPreview: Boolean,
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-    headerRight: (@Composable RowScope.() -> Unit)? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    // 箭头旋转：收起指向右，展开旋转 90° 指向下
-    val chevron by animateFloatAsState(
-        targetValue = if (expanded) 90f else 0f,
-        animationSpec = tween(durationMillis = 220),
-        label = "detailCardChevron"
-    )
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            // 统一按压反馈（按下轻微收缩）+ 点击切换展开 / 收起
-            .pressable(onClick = onToggle)
-            .clip(RoundedCornerShape(24.dp))
-            .frostedSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(24.dp),
-                inPreview = inPreview
-            )
-            .padding(16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = title,
-                style = MiuixTheme.textStyles.title3,
-                color = MiuixTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            headerRight?.invoke(this)
-            Spacer(modifier = Modifier.width(6.dp))
-            Image(
-                imageVector = MiuixIcons.Regular.ChevronForward,
-                contentDescription = if (expanded) "收起" else "展开",
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = chevron },
-                colorFilter = ColorFilter.tint(
-                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
-            )
-        }
-        // 平滑伸缩：展开 / 收起时内容高度从 0 渐变到满，带动卡片上下边框平滑拉长，不闪现
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(tween(200)) + expandVertically(
-                expandFrom = Alignment.Top,
-                animationSpec = tween(240)
-            ),
-            exit = fadeOut(tween(160)) + shrinkVertically(
-                shrinkTowards = Alignment.Top,
-                animationSpec = tween(200)
-            )
-        ) {
-            Column {
-                Spacer(modifier = Modifier.height(12.dp))
-                content()
-            }
-        }
-    }
-}
-
-/** 一行「标签 + 取值」信息：标签居左淡显，取值紧随其后，过长省略。 */
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = value,
-            style = MiuixTheme.textStyles.body1,
-            color = MiuixTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
         )
     }
 }
@@ -399,19 +294,7 @@ private fun BasicInfoCard(
 ) {
     val bitmap = rememberImageBitmap(device.imageUri)
     // 基础信息不做展开：常驻磨砂卡片，无箭头、不可点击
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 统一按压反馈（基础信息不做展开，仅按压反馈）
-            .pressable(onClick = { })
-            .clip(RoundedCornerShape(24.dp))
-            .frostedSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(24.dp),
-                inPreview = inPreview
-            )
-            .padding(16.dp)
-    ) {
+    StaticCard(backdrop = backdrop, inPreview = inPreview) {
         Text(
             text = "基础信息",
             style = MiuixTheme.textStyles.title3,
@@ -473,24 +356,48 @@ private fun BasicInfoCard(
 
 /**
  * 关联订单卡片：
- * - 使用中：展开显示当前正在测试的订单，每条一行——左侧订单号 + 样品批次，右侧入箱 / 出箱日期；
- * - 空闲：标题栏右侧显示「历史订单」，默认收起，点击展开列表式显示历史测过的订单号。
+ * - 始终常驻展开第一条订单（收起态卡片不空），再点一次展开剩余全部订单；
+ * - 使用中展示当前正在测试的订单（订单号 + 样品批次 + 开始 / 结束时间），
+ *   空闲展示历史测过的订单（标题栏右侧仍标「历史订单」），两者行格式一致；
+ * - 开始 / 结束时间定向到该订单的 IQC 开始时间 / OQC 结束时间；
+ * - 订单号前一个状态圆点：进行中蓝 / 已完结绿（与设备状态圆点同款）；
+ * - 不同订单之间用分割线隔开；整行可点进对应订单详情页。
  */
 @Composable
 private fun AssociatedOrdersCard(
     device: Device,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    onOrderClick: (String) -> Unit,
 ) {
-    val inUse = device.status == DeviceStatus.IN_USE
-    // 使用中默认展开当前订单；空闲默认收起，点「历史订单」再展开
-    var expanded by remember(device.id) { mutableStateOf(inUse) }
+    val inUse = device.computeStatus(orderStore) == DeviceStatus.IN_USE
+    // 默认只展开第一条；点一次再展开剩余全部
+    var showAll by remember(device.id) { mutableStateOf(false) }
+    // 统一成同一种行数据：开始 / 结束定向到该订单的 IQC 开始 / OQC 结束时间，
+    // 订单不在订单库时回退到设备侧记录的 startTime / endTime
+    fun entryOf(o: DeviceOrder, defaultCompleted: Boolean): OrderEntry {
+        val linked = orderStore.findByOrderNo(o.orderNo)
+        return OrderEntry(
+            orderNo = o.orderNo,
+            completed = linked?.status?.let { it == OrderStatus.COMPLETED } ?: defaultCompleted,
+            sampleBatch = o.sampleBatch,
+            startTime = linked?.nodes?.firstOrNull()?.startTime ?: o.startTime,
+            endTime = linked?.nodes?.lastOrNull()?.endTime ?: o.endTime,
+        )
+    }
+    val entries: List<OrderEntry> = if (inUse) {
+        device.currentOrders.map { entryOf(it, defaultCompleted = false) }
+    } else {
+        // 历史订单与当前订单同构，行格式完全一致；库里查不到时按已完结处理（绿色圆点）
+        device.historyOrders.map { entryOf(it, defaultCompleted = true) }
+    }
     DetailCard(
         backdrop = backdrop,
         inPreview = inPreview,
         title = "关联订单",
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
+        expanded = showAll,
+        onToggle = { showAll = !showAll },
         headerRight = {
             if (!inUse) {
                 Text(
@@ -500,88 +407,88 @@ private fun AssociatedOrdersCard(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
             }
+        },
+        // 收起态也常驻第一条订单
+        previewContent = {
+            if (entries.isEmpty()) {
+                EmptyHint(if (inUse) "暂无正在测试的订单" else "暂无历史订单")
+            } else {
+                OrderEntryRow(entries.first(), onOrderClick)
+            }
         }
     ) {
-        if (inUse) {
-            if (device.currentOrders.isEmpty()) {
-                EmptyHint("暂无正在测试的订单")
+        // 展开后补上剩余订单，开头一道分割线与常驻的第一条隔开
+        entries.drop(1).forEachIndexed { index, entry ->
+            if (index == 0) {
+                CardDivider()
+                Spacer(modifier = Modifier.height(10.dp))
             } else {
-                device.currentOrders.forEachIndexed { index, order ->
-                    if (index > 0) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        CardDivider()
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-                    OrderRow(order)
-                }
+                Spacer(modifier = Modifier.height(10.dp))
+                CardDivider()
+                Spacer(modifier = Modifier.height(10.dp))
             }
-        } else {
-            if (device.historyOrders.isEmpty()) {
-                EmptyHint("暂无历史订单")
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    device.historyOrders.forEach { no ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.6f))
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = no,
-                                style = MiuixTheme.textStyles.body1,
-                                color = MiuixTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
+            OrderEntryRow(entry, onOrderClick)
         }
     }
 }
 
-/** 单条关联订单：左侧订单号 + 样品批次，右侧入箱 / 出箱日期（双行）。 */
+/** 关联订单行数据：开始 / 结束取自订单 IQC 开始 / OQC 结束（不在库时回退设备侧记录） */
+private data class OrderEntry(
+    val orderNo: String,
+    val completed: Boolean,
+    val sampleBatch: String = "",
+    val startTime: String = "",
+    val endTime: String = "",
+)
+
+/**
+ * 单条关联订单行：订单号前一个状态圆点（进行中蓝 / 已完结绿，与设备状态圆点同款），
+ * 批次跟在名称下方，开始 / 结束时间在右侧；整行可点进对应订单详情页。
+ */
 @Composable
-private fun OrderRow(order: DeviceOrder) {
+private fun OrderEntryRow(entry: OrderEntry, onOrderClick: (String) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressable(onClick = { onOrderClick(entry.orderNo) }),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        StatusDot(color = if (entry.completed) StatusIdleColor else StatusInUseColor)
+        Spacer(modifier = Modifier.width(10.dp))
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = order.orderNo,
+                text = entry.orderNo,
                 style = MiuixTheme.textStyles.body1,
                 color = MiuixTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "批次 ${order.sampleBatch}",
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (entry.sampleBatch.isNotBlank()) {
+                Text(
+                    text = "批次 ${entry.sampleBatch}",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
+        // 开始 / 结束两行常驻，缺时间用 — 占位，保证不同设备的行格式一致
         Spacer(modifier = Modifier.width(12.dp))
         Column(
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = "入箱 ${order.boxInDate}",
+                text = "开始 ${entry.startTime.ifBlank { "—" }}",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.75f)
             )
             Text(
-                text = "出箱 ${order.boxOutDate}",
+                text = "结束 ${entry.endTime.ifBlank { "—" }}",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.75f)
             )
@@ -642,6 +549,7 @@ private fun FormStatusCard(
 private fun MoreInfoCard(
     device: Device,
     store: DeviceStore,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
@@ -656,7 +564,7 @@ private fun MoreInfoCard(
     } else {
         "—"
     }
-    val statusText = if (device.status == DeviceStatus.IN_USE) "使用中" else "空闲"
+    val statusText = if (device.computeStatus(orderStore) == DeviceStatus.IN_USE) "使用中" else "空闲"
     val seq = extractSequence(device.number)
     DetailCard(
         backdrop = backdrop,
@@ -673,25 +581,4 @@ private fun MoreInfoCard(
             InfoRow("运行状态", statusText)
         }
     }
-}
-
-/** 卡片内分隔线 */
-@Composable
-private fun CardDivider() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-    )
-}
-
-/** 空数据占位提示 */
-@Composable
-private fun EmptyHint(text: String) {
-    Text(
-        text = text,
-        style = MiuixTheme.textStyles.body2,
-        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-    )
 }

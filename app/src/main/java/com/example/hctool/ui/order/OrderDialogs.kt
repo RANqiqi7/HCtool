@@ -52,7 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.components.dialogSurface
 import com.example.hctool.ui.device.DeviceField
 import com.example.hctool.ui.device.GlassIconButton
 import com.example.hctool.ui.device.rememberImageBitmap
@@ -67,8 +67,8 @@ import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-/** 弹框背后的半透明遮罩（与设备弹窗一致） */
-private val OrderDialogScrim = Color.Black.copy(alpha = 0.35f)
+/** 弹框背后的半透明遮罩：加深一档，让弹窗从背景中更突出 */
+private val OrderDialogScrim = Color.Black.copy(alpha = 0.55f)
 
 /** 弹框头部统一高度，保证标题与各个按钮垂直居中对齐 */
 private val OrderDialogHeaderHeight = 44.dp
@@ -210,9 +210,8 @@ fun AddOrderDialog(
                 .heightIn(max = maxDialogHeight)
                 // 内容增减 / 输入法避让时高度平滑过渡，不突然跳变
                 .animateContentSize()
-                .frostedSurface(
+                .dialogSurface(
                     backdrop = backdrop,
-                    shape = RoundedCornerShape(28.dp),
                     inPreview = inPreview
                 )
                 .padding(18.dp)

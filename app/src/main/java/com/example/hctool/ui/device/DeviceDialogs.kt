@@ -57,7 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.components.dialogSurface
 import com.kyant.backdrop.Backdrop
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -72,8 +72,8 @@ import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** 弹框背后的半透明遮罩 */
-private val DialogScrim = Color.Black.copy(alpha = 0.35f)
+/** 弹框背后的半透明遮罩：加深一档，让弹窗从背景中更突出 */
+private val DialogScrim = Color.Black.copy(alpha = 0.55f)
 
 /** 弹框头部统一高度，保证标题与各个按钮垂直居中对齐 */
 private val DialogHeaderHeight = 44.dp
@@ -199,9 +199,8 @@ fun AddDeviceDialog(
                 .heightIn(max = maxDialogHeight)
                 // 内容增减 / 输入法避让时高度平滑过渡，不突然跳变
                 .animateContentSize()
-                .frostedSurface(
+                .dialogSurface(
                     backdrop = backdrop,
-                    shape = RoundedCornerShape(28.dp),
                     inPreview = inPreview
                 )
                 .padding(18.dp)
@@ -403,9 +402,8 @@ fun MapEditDialog(
                 .heightIn(max = maxDialogHeight)
                 // 内容增减 / 输入法避让时高度平滑过渡，不突然跳变
                 .animateContentSize()
-                .frostedSurface(
+                .dialogSurface(
                     backdrop = backdrop,
-                    shape = RoundedCornerShape(28.dp),
                     inPreview = inPreview
                 )
                 .padding(18.dp)

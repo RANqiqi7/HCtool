@@ -3,6 +3,7 @@ package com.example.hctool.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -98,6 +99,31 @@ fun Modifier.frostedSurface(
         )
     }
 )
+
+/** 弹窗专用叠色：比卡片更实的深色，压住背后亮壁纸的透光，让弹窗读起来是一整块实体 */
+val DialogTint = Color.Black.copy(alpha = 0.62f)
+
+/**
+ * 弹窗专用表面：更实的深色磨砂 + 一圈亮边高光。
+ * 亮边给弹窗一道清晰的轮廓光，配合更深的遮罩让弹窗从背景中跳出来（更突出）。
+ */
+fun Modifier.dialogSurface(
+    backdrop: Backdrop,
+    inPreview: Boolean = false,
+    shape: Shape = RoundedCornerShape(28.dp),
+): Modifier = this
+    .frostedSurface(
+        backdrop = backdrop,
+        shape = shape,
+        inPreview = inPreview,
+        surfaceTint = DialogTint,
+        previewTint = Color.Black.copy(alpha = 0.72f)
+    )
+    .border(
+        width = 1.2.dp,
+        color = Color.White.copy(alpha = 0.30f),
+        shape = shape
+    )
 
 /**
  * 统一的玻璃按钮：玻璃材质 + 按压缩放反馈（按下缩到 0.94，spring 0.65/900 弹回），
