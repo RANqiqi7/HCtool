@@ -77,8 +77,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /** 关于卡片里展示的软件信息常量（作者与仓库地址按实际填写 / 替换）。 */
 private const val APP_NAME = "HCtool"
 private const val AUTHOR = "柒柒喵呜"
-// TODO：上传到 GitHub 后，把下面换成你的真实仓库地址
-private const val GITHUB_URL = "https://github.com/ranqiqi/HCtool"
+private const val GITHUB_URL = "https://github.com/RANqiqi7/HCtool"
 
 /**
  * 设置页：设备页顶栏齿轮按钮打开，整屏从右侧滑入、盖住主页面。
@@ -235,7 +234,7 @@ private fun SettingsTopBar(
                     inPreview = inPreview
                 )
                 .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.CenterStart
+            contentAlignment = Alignment.Center
         ) {
             Text(
                 text = "设置",
