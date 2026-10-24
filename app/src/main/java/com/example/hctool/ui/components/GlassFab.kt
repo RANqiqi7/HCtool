@@ -1,9 +1,13 @@
 package com.example.hctool.ui.components
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -21,6 +25,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * @param icon 按钮图标
  * @param contentDescription 图标的无障碍描述
  * @param modifier 外部修饰符
+ * @param minus 为 true 时画成减号（miuix 图标集里没有纯减号字形，用一根圆角横条代替）
  * @param onClick 点击回调
  */
 @Composable
@@ -29,6 +34,7 @@ fun GlassFab(
     icon: ImageVector,
     contentDescription: String,
     modifier: Modifier = Modifier,
+    minus: Boolean = false,
     onClick: () -> Unit
 ) {
     GlassButton(
@@ -37,11 +43,20 @@ fun GlassFab(
         // 尺寸与底栏等高，胶囊形状在正方形里就是正圆
         modifier = modifier.size(64.dp)
     ) {
-        Image(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(28.dp),
-            colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
-        )
+        if (minus) {
+            Box(
+                modifier = Modifier
+                    .size(width = 26.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MiuixTheme.colorScheme.primary)
+            )
+        } else {
+            Image(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(28.dp),
+                colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
+            )
+        }
     }
 }

@@ -77,6 +77,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * @param orderStore 订单数据（设备运行状态由关联订单节点推导，状态圆点 / 筛选都要用）
  * @param backdrop   玻璃采样源（用 imageBackdrop，只采背景图）
  * @param inPreview  预览态退化玻璃为纯色
+ * @param addMode    右下角加号是否处于「添加设备」模式：为 true 时网格上所有空格子都显示加号
  */
 @Composable
 fun DeviceScreen(
@@ -84,12 +85,11 @@ fun DeviceScreen(
     orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    addMode: Boolean,
     modifier: Modifier = Modifier,
     onDialogOpenChange: (Boolean) -> Unit = {},
     onDeviceClick: (Device) -> Unit = {},
 ) {
-    // 第一次点空格子 → 该格进入「待添加」态显示加号；再点加号 → 弹添加框
-    var pendingCell by remember { mutableStateOf<Int?>(null) }
     // 非空表示正在为该格子添加设备
     var addDialogCell by remember { mutableStateOf<Int?>(null) }
     // 地图编辑弹框开关
@@ -112,6 +112,11 @@ fun DeviceScreen(
         mapNames.map { FilterTag(2, it) },
         deviceNames.map { FilterTag(1, it) },
     )
+    // 共享筛选面板用「组下标 + 项下标」标记选中项
+    val activeIndex = activeFilter?.let { af ->
+        val gi = filterGroups.indexOfFirst { af in it }
+        if (gi < 0) null else gi to filterGroups[gi].indexOf(af)
+    }
 
     // 任一子级弹窗打开时通知外层锁定主界面左右切页
     LaunchedEffect(editOpen, addDialogCell) {
@@ -169,17 +174,13 @@ fun DeviceScreen(
                 orderStore = orderStore,
                 backdrop = backdrop,
                 inPreview = inPreview,
-                pendingCell = pendingCell,
+                addMode = addMode,
                 activeFilter = activeFilter,
                 onEdit = { editOpen = true },
                 onCellClick = { cell ->
-                    when {
-                        // 格子上已有设备：暂不处理（后续可接设备详情）
-                        store.deviceAt(map.id, cell) != null -> Unit
-                        // 已处于待添加态：第二次点击，打开添加框
-                        pendingCell == cell -> addDialogCell = cell
-                        // 空格子首次点击：标记为待添加，显示加号
-                        else -> pendingCell = cell
+                    // 添加模式下点空格子 → 弹添加框；格子上已有设备则不响应
+                    if (addMode && store.deviceAt(map.id, cell) == null) {
+                        addDialogCell = cell
                     }
                 }
             )
@@ -187,9 +188,10 @@ fun DeviceScreen(
             // 副标题栏：磨砂圆角外框「设备列表」居左，框内右侧筛选按钮；
             // 筛选列表挂在根 Box 上叠加显示，不参与这里的高度，不会把卡片挤下去
             Box(modifier = Modifier.fillMaxWidth()) {
-                DeviceListHeader(
+                ListHeader(
                     backdrop = backdrop,
                     inPreview = inPreview,
+                    title = "设备列表",
                     filterActive = activeFilter != null,
                     onToggleFilter = { filterMenuOpen = !filterMenuOpen },
                     onPositionChanged = { top, bottom ->
@@ -252,10 +254,11 @@ fun DeviceScreen(
             FilterMenu(
                 backdrop = combinedBackdrop,
                 inPreview = inPreview,
-                groups = filterGroups,
-                active = activeFilter,
+                groups = filterGroups.map { g -> g.map { it.label } },
+                active = activeIndex,
                 maxHeight = panelMaxH,
-                onPick = { tag ->
+                onPick = { gi, ii ->
+                    val tag = filterGroups[gi][ii]
                     // 再点已选中标签 = 取消筛选
                     activeFilter = if (activeFilter == tag) null else tag
                     filterMenuOpen = false
@@ -276,10 +279,8 @@ fun DeviceScreen(
             AddDeviceDialog(
                 backdrop = combinedBackdrop,
                 inPreview = inPreview,
-                onDismiss = {
-                    addDialogCell = null
-                    pendingCell = null
-                },
+                // 只关弹窗；addMode 保持，其余空格子继续显示加号，可接着添加下一台
+                onDismiss = { addDialogCell = null },
                 onConfirm = { nickname, number, model, imageUri ->
                     // 只写数据；关闭由弹窗自己 requestClose 滑出后经 onDismiss 完成
                     store.addDevice(
@@ -308,7 +309,7 @@ private fun DeviceMapCard(
     orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
-    pendingCell: Int?,
+    addMode: Boolean,
     activeFilter: FilterTag?,
     onEdit: () -> Unit,
     onCellClick: (Int) -> Unit,
@@ -367,7 +368,7 @@ private fun DeviceMapCard(
             MapPager(
                 store = store,
                 orderStore = orderStore,
-                pendingCell = pendingCell,
+                addMode = addMode,
                 activeFilter = activeFilter,
                 onCellClick = onCellClick
             )
@@ -384,7 +385,7 @@ private fun DeviceMapCard(
 private fun MapPager(
     store: DeviceStore,
     orderStore: OrderStore,
-    pendingCell: Int?,
+    addMode: Boolean,
     activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
 ) {
@@ -438,7 +439,7 @@ private fun MapPager(
                 map = maps[page.mod(size)],
                 store = store,
                 orderStore = orderStore,
-                pendingCell = pendingCell,
+                addMode = addMode,
                 activeFilter = activeFilter,
                 onCellClick = onCellClick,
                 height = gridHeight
@@ -456,7 +457,7 @@ private fun GridMap(
     map: DeviceMap,
     store: DeviceStore,
     orderStore: OrderStore,
-    pendingCell: Int?,
+    addMode: Boolean,
     activeFilter: FilterTag?,
     onCellClick: (Int) -> Unit,
     height: Dp,
@@ -481,7 +482,8 @@ private fun GridMap(
                             .weight(1f)
                             .height(cellHeight),
                         device = device,
-                        armed = pendingCell == cell,
+                        // 添加模式下所有空格子都亮加号
+                        armed = addMode && device == null,
                         // 选中筛选标签时：不匹配的设备色块降透明度，突出筛选结果
                         dimmed = device != null &&
                             activeFilter != null &&
@@ -621,158 +623,5 @@ private fun matchFilter(
     else -> store.maps.firstOrNull { it.id == d.mapId }?.name == f.label
 }
 
-/**
- * 「设备列表」副标题栏：磨砂玻璃圆角外框、文字居左，框内右侧一个筛选按钮。
- * 外框 fillMaxWidth，与上方「设备地图」框水平对齐。
- */
-@Composable
-private fun DeviceListHeader(
-    backdrop: Backdrop,
-    inPreview: Boolean,
-    filterActive: Boolean,
-    onToggleFilter: () -> Unit,
-    onPositionChanged: (Dp, Dp) -> Unit,
-) {
-    val density = LocalDensity.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 回报顶 / 底边在整页中的 y 坐标，供筛选列表定向与定位
-            .onGloballyPositioned {
-                val bounds = it.boundsInRoot()
-                onPositionChanged(
-                    with(density) { bounds.top.toDp() },
-                    with(density) { bounds.bottom.toDp() }
-                )
-            }
-            .frostedSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(22.dp),
-                inPreview = inPreview
-            )
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "设备列表",
-            style = MiuixTheme.textStyles.title3,
-            color = MiuixTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
-        // 筛选按钮：纯图标，不带圆形按钮框
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onToggleFilter
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                imageVector = MiuixIcons.Regular.Filter,
-                contentDescription = "筛选",
-                modifier = Modifier.size(20.dp),
-                colorFilter = ColorFilter.tint(
-                    if (filterActive) {
-                        MiuixTheme.colorScheme.primary
-                    } else {
-                        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                    }
-                )
-            )
-        }
-    }
-}
+// 「设备列表」副标题栏与筛选面板已上移到 DeviceWidgets 的 ListHeader / FilterMenu，与订单页共用。
 
-/**
- * 筛选下拉列表：标签按组平铺（状态 / 设备名称 / 地图名称），组间用分割线隔开，不做子级列表；
- * 选中项高亮并显示对号；高度超过 maxHeight 时内部上下滚动。
- *
- * @param maxHeight 可用最大高度（由调用方按上下底栏界限钳制）
- */
-@Composable
-private fun FilterMenu(
-    backdrop: Backdrop,
-    inPreview: Boolean,
-    groups: List<List<FilterTag>>,
-    active: FilterTag?,
-    maxHeight: Dp,
-    onPick: (FilterTag) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .width(230.dp)
-            .heightIn(max = maxHeight)
-            .clip(RoundedCornerShape(20.dp))
-            .frostedSurface(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(20.dp),
-                inPreview = inPreview
-            )
-            .padding(vertical = 6.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        groups.forEachIndexed { gi, group ->
-            // 不同筛选类型之间用分割线隔开
-            if (gi > 0) MenuDivider()
-            group.forEach { tag ->
-                FilterRow(text = tag.label, selected = tag == active) { onPick(tag) }
-            }
-        }
-    }
-}
-
-/** 筛选面板里的分割线 */
-@Composable
-private fun MenuDivider() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.15f))
-    )
-}
-
-/** 筛选面板里的一行标签：选中时高亮并显示对号 */
-@Composable
-private fun FilterRow(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = text,
-            style = MiuixTheme.textStyles.body1,
-            color = if (selected) {
-                MiuixTheme.colorScheme.primary
-            } else {
-                MiuixTheme.colorScheme.onSurface
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        if (selected) {
-            Image(
-                imageVector = MiuixIcons.Regular.Ok,
-                contentDescription = "已选",
-                modifier = Modifier.size(16.dp),
-                colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
-            )
-        }
-    }
-}

@@ -260,9 +260,9 @@ private fun DetailTopBar(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                // 设备编号紧随名称展示
+                // 胶囊右侧只展示序号（从设备编号正则提取），完整编号在「更多信息」卡片里看
                 Text(
-                    text = device.number,
+                    text = extractSequence(device.number)?.let { "序号 $it" } ?: "未编号",
                     style = MiuixTheme.textStyles.body2,
                     color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     maxLines = 1,
@@ -283,8 +283,8 @@ private fun DetailTopBar(
 }
 
 /**
- * 基础信息卡片：居左多行显示设备型号 / 待完成表单数量 / 在测样品批数 / 上次运行时间，
- * 右下角显示设备照片，照片水平宽度占卡片（内容区）宽度的五分之一；无照片时用占位框。
+ * 基础信息卡片：居左多行显示设备型号 / 待完成表单数量 / 在测样品批数 / 上次运行时间。
+ * 设备照片已移到「更多信息」卡片里。
  */
 @Composable
 private fun BasicInfoCard(
@@ -292,7 +292,6 @@ private fun BasicInfoCard(
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
-    val bitmap = rememberImageBitmap(device.imageUri)
     // 基础信息不做展开：常驻磨砂卡片，无箭头、不可点击
     StaticCard(backdrop = backdrop, inPreview = inPreview) {
         Text(
@@ -303,53 +302,11 @@ private fun BasicInfoCard(
             overflow = TextOverflow.Ellipsis
         )
         Spacer(modifier = Modifier.height(12.dp))
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            // 照片水平宽度 = 内容宽度的 1/5
-            val photoW = maxWidth / 5
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // 给右下角照片让出横向空间，避免文字压到照片上
-                    .padding(end = photoW + 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                InfoRow("设备型号", device.model.ifBlank { "—" })
-                InfoRow("待完成表单", "${device.pendingFormCount} 份")
-                InfoRow("在测样品批数", "${device.testingSampleBatches} 批")
-                InfoRow("上次运行时间", device.lastRunTime.ifBlank { "—" })
-            }
-            if (bitmap != null) {
-                val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
-                Image(
-                    bitmap = bitmap,
-                    contentDescription = "设备照片",
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .width(photoW)
-                        .aspectRatio(ratio)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .width(photoW)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        imageVector = MiuixIcons.Regular.Photos,
-                        contentDescription = "暂无照片",
-                        modifier = Modifier.size(photoW * 0.45f),
-                        colorFilter = ColorFilter.tint(
-                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.35f)
-                        )
-                    )
-                }
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            InfoRow("设备型号", device.model.ifBlank { "—" })
+            InfoRow("待完成表单", "${device.pendingFormCount} 份")
+            InfoRow("在测样品批数", "${device.testingSampleBatches} 批")
+            InfoRow("上次运行时间", device.lastRunTime.ifBlank { "—" })
         }
     }
 }
@@ -358,7 +315,7 @@ private fun BasicInfoCard(
  * 关联订单卡片：
  * - 始终常驻展开第一条订单（收起态卡片不空），再点一次展开剩余全部订单；
  * - 使用中展示当前正在测试的订单（订单号 + 样品批次 + 开始 / 结束时间），
- *   空闲展示历史测过的订单（标题栏右侧仍标「历史订单」），两者行格式一致；
+ *   空闲展示历史测过的订单，两者行格式一致；
  * - 开始 / 结束时间定向到该订单的 IQC 开始时间 / OQC 结束时间；
  * - 订单号前一个状态圆点：进行中蓝 / 已完结绿（与设备状态圆点同款）；
  * - 不同订单之间用分割线隔开；整行可点进对应订单详情页。
@@ -398,16 +355,6 @@ private fun AssociatedOrdersCard(
         title = "关联订单",
         expanded = showAll,
         onToggle = { showAll = !showAll },
-        headerRight = {
-            if (!inUse) {
-                Text(
-                    text = "历史订单",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-            }
-        },
         // 收起态也常驻第一条订单
         previewContent = {
             if (entries.isEmpty()) {
@@ -505,7 +452,6 @@ private fun FormStatusCard(
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
-    var expanded by remember(device.id) { mutableStateOf(true) }
     val total = device.totalFormCount
     val done = device.completedFormCount
     val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -514,8 +460,8 @@ private fun FormStatusCard(
         backdrop = backdrop,
         inPreview = inPreview,
         title = "表单情况",
-        expanded = expanded,
-        onToggle = { expanded = !expanded }
+        // 不带下拉展开：内容始终完整显示
+        collapsible = false
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // 完成率进度条
@@ -543,7 +489,8 @@ private fun FormStatusCard(
 }
 
 /**
- * 更多信息卡片：设备编号 / 序号 / 所属地图 / 网格位置 / 运行状态。
+ * 更多信息卡片：设备编号 / 所属地图 / 运行状态，下方展示设备照片（已从基础信息卡片移到这里）；
+ * 无照片时用占位框。
  */
 @Composable
 private fun MoreInfoCard(
@@ -553,32 +500,52 @@ private fun MoreInfoCard(
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
-    var expanded by remember(device.id) { mutableStateOf(true) }
     val map = store.maps.firstOrNull { it.id == device.mapId }
     val mapName = map?.name ?: "—"
-    // 网格位置：由 cell 与地图列数反算行列（1 起）
-    val position = if (map != null && map.cols > 0) {
-        val row = device.cell / map.cols + 1
-        val col = device.cell % map.cols + 1
-        "第 $row 行 · 第 $col 列"
-    } else {
-        "—"
-    }
     val statusText = if (device.computeStatus(orderStore) == DeviceStatus.IN_USE) "使用中" else "空闲"
-    val seq = extractSequence(device.number)
+    val bitmap = rememberImageBitmap(device.imageUri)
     DetailCard(
         backdrop = backdrop,
         inPreview = inPreview,
         title = "更多信息",
-        expanded = expanded,
-        onToggle = { expanded = !expanded }
+        // 不带下拉展开：内容始终完整显示
+        collapsible = false
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             InfoRow("设备编号", device.number.ifBlank { "—" })
-            InfoRow("设备序号", seq ?: "未编号")
             InfoRow("所属地图", mapName)
-            InfoRow("网格位置", position)
             InfoRow("运行状态", statusText)
+            // 照片整宽展示，高度随图片宽高比自适应
+            if (bitmap != null) {
+                val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "设备照片",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(ratio)
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(2.6f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        imageVector = MiuixIcons.Regular.Photos,
+                        contentDescription = "暂无照片",
+                        modifier = Modifier.size(36.dp),
+                        colorFilter = ColorFilter.tint(
+                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                        )
+                    )
+                }
+            }
         }
     }
 }

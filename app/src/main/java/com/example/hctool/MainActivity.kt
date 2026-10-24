@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -62,23 +61,18 @@ import com.example.hctool.ui.components.FloatingBottomBar
 import com.example.hctool.ui.components.FloatingBottomBarItem
 import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.GlassFab
-import com.example.hctool.ui.components.TabCountBadge
 import com.example.hctool.ui.components.glassSurface
 import com.example.hctool.ui.device.Device
 import com.example.hctool.ui.device.DeviceDetailScreen
 import com.example.hctool.ui.device.DeviceScreen
-import com.example.hctool.ui.device.DeviceStatus
-import com.example.hctool.ui.device.computeStatus
 import com.example.hctool.ui.device.rememberDeviceStore
 import com.example.hctool.ui.order.AddOrderDialog
 import com.example.hctool.ui.order.Order
 import com.example.hctool.ui.order.OrderDetailScreen
 import com.example.hctool.ui.order.OrderScreen
-import com.example.hctool.ui.order.OrderStatus
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.currentSubmitTime
 import com.example.hctool.ui.order.rememberOrderStore
-import com.example.hctool.ui.order.status
 import com.example.hctool.ui.theme.HCtoolTheme
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -137,6 +131,14 @@ fun MainScreen() {
     var addOrderOpen by remember { mutableStateOf(false) }
     // 当前打开详情的订单：非空时在订单页之上滑入整屏详情页浮层
     var detailOrder by remember { mutableStateOf<Order?>(null) }
+    // 设备页「添加设备」模式：右下角加号按下后变减号，网格上所有空格子亮加号；
+    // 每完成一台添加其他加号保留，可连续添加；再按减号才关闭全部加号
+    var deviceAddMode by remember { mutableStateOf(false) }
+
+    // 离设备页（翻页 / 进详情）时自动退出添加模式，避免减号留在其它页上
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex != 0) deviceAddMode = false
+    }
 
     // 翻页 → 同步底栏高亮与顶栏标题
     LaunchedEffect(pagerState) {
@@ -249,6 +251,7 @@ fun MainScreen() {
                             orderStore = orderStore,
                             backdrop = imageBackdrop,
                             inPreview = inPreview,
+                            addMode = deviceAddMode,
                             onDialogOpenChange = { deviceDialogOpen = it },
                             onDeviceClick = { detailDevice = it },
                             modifier = Modifier.fillMaxSize()
@@ -445,12 +448,6 @@ fun MainScreen() {
         }
 
         // 底部悬浮层：左边是收缩后的玻璃底栏，右边是独立的玻璃加号按钮
-        // 底栏 badge 数量：设备=使用中台数、订单=进行中单数、待办=今日待办数（暂无待办数据，恒 0 不显示）
-        val badges = listOf(
-            deviceStore.devices.count { it.computeStatus(orderStore) == DeviceStatus.IN_USE },
-            orderStore.orders.count { it.status == OrderStatus.IN_PROGRESS },
-            0,
-        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -488,32 +485,29 @@ fun MainScreen() {
                             },
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp)
                         ) {
-                            // 底栏只保留图标，去掉图标下的文字标题；图标右上角叠数量 badge
-                            // （badge 在选中玻璃 pill 下层，选中页会带一点玻璃折射质感）
-                            Box {
-                                Icon(
-                                    imageVector = icons[index],
-                                    contentDescription = label,
-                                    tint = MiuixTheme.colorScheme.onSurface
-                                )
-                                TabCountBadge(
-                                    count = badges[index],
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .offset(x = 8.dp, y = (-4).dp)
-                                )
-                            }
+                            // 底栏只保留图标，去掉图标下的文字标题
+                            Icon(
+                                imageVector = icons[index],
+                                contentDescription = label,
+                                tint = MiuixTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
-                // 添加按钮：与底栏同高同材质，视觉上属于同一条悬浮层
+                // 添加按钮：与底栏同高同材质，视觉上属于同一条悬浮层；
+                // 设备页上它是「添加模式」开关（开启时变减号），订单页上直接弹新增订单
                 GlassFab(
                     backdrop = backdrop,
                     icon = MiuixIcons.Regular.Add,
-                    contentDescription = "添加"
+                    contentDescription = if (selectedIndex == 0 && deviceAddMode) "关闭添加设备" else "添加",
+                    minus = selectedIndex == 0 && deviceAddMode
                 ) {
-                    // 订单页：加号弹出新增订单；其它页暂不处理
-                    if (selectedIndex == 1) addOrderOpen = true
+                    when (selectedIndex) {
+                        // 设备页：切换添加模式，开启后网格空格子全亮加号，再按关闭
+                        0 -> deviceAddMode = !deviceAddMode
+                        // 订单页：加号弹出新增订单
+                        1 -> addOrderOpen = true
+                    }
                 }
             }
         }

@@ -137,8 +137,8 @@ fun AddDeviceDialog(
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // 输入法实时高度：底边跟随其上沿同步向上避让
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-    // 主顶栏下沿 ≈ 状态栏 + 10dp 上边距 + 64dp 标题胶囊高，再留一个 gap
-    val topLimit = statusTop + 74.dp + gap
+    // 主顶栏下沿 ≈ 状态栏 + 10dp 上边距 + 64dp 标题胶囊高，再留一个 gap；顶边额外下移 7dp
+    val topLimit = statusTop + 81.dp + gap
 
     // 入场：挂载后翻转 shown，面板从屏幕底部外平滑弹入、遮罩同步淡入
     var shown by remember { mutableStateOf(false) }
@@ -155,6 +155,8 @@ fun AddDeviceDialog(
             onDismiss()
         }
     }
+    // 系统返回键：只关闭本弹窗，不能泄到 Activity 默认行为把应用退掉
+    BackHandler { requestClose() }
     val scrimAlpha by animateFloatAsState(
         targetValue = if (shown) 1f else 0f,
         animationSpec = tween(durationMillis = 200),
@@ -363,8 +365,8 @@ fun MapEditDialog(
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // 输入法实时高度：底边跟随其上沿同步向上避让
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-    // 主顶栏下沿 ≈ 状态栏 + 10dp 上边距 + 64dp 标题胶囊高，再留一个 gap
-    val topLimit = statusTop + 74.dp + gap
+    // 主顶栏下沿 ≈ 状态栏 + 10dp 上边距 + 64dp 标题胶囊高，再留一个 gap；顶边额外下移 7dp
+    val topLimit = statusTop + 81.dp + gap
 
     BoxWithConstraints(
         modifier = Modifier

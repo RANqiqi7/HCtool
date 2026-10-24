@@ -87,6 +87,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // 生物识别用平台自带的 android.hardware.biometrics（API 28+），不引入 androidx.biometric：
+    // 它要求宿主是 FragmentActivity，而旧版 androidx.fragment 会对 Activity Result 的
+    // requestCode 做 16 位校验，导致一点相册 / 相机就闪退
     
     // 液态玻璃效果库
     implementation(libs.backdrop)

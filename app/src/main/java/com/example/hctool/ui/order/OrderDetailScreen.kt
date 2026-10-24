@@ -1,6 +1,7 @@
 package com.example.hctool.ui.order
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -47,16 +48,23 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.hctool.R
+import com.example.hctool.ui.components.BiometricVerify
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.components.rememberBiometricVerifier
 import com.example.hctool.ui.device.CardDivider
 import com.example.hctool.ui.device.DetailCard
 import com.example.hctool.ui.device.Device
-import com.example.hctool.ui.device.DeviceCard
+import com.example.hctool.ui.device.DeviceStatus
 import com.example.hctool.ui.device.DeviceStore
 import com.example.hctool.ui.device.EmptyHint
 import com.example.hctool.ui.device.GlassIconButton
 import com.example.hctool.ui.device.InfoRow
 import com.example.hctool.ui.device.StaticCard
+import com.example.hctool.ui.device.StatusDot
+import com.example.hctool.ui.device.StatusIdleColor
+import com.example.hctool.ui.device.StatusInUseColor
+import com.example.hctool.ui.device.computeStatus
+import com.example.hctool.ui.device.extractSequence
 import com.example.hctool.ui.device.pressable
 import com.example.hctool.ui.device.rememberImageBitmap
 import com.kyant.backdrop.Backdrop
@@ -388,9 +396,10 @@ private fun BasicInfoCard(
 }
 
 /**
- * 关联设备卡片：列出关联了本订单的设备（当前订单或历史订单含本订单号），
- * 每台设备的展示与首页设备列表里的设备卡片完全一致（复用 DeviceCard）；
- * 点击某台设备即进入对应设备详情页。无关联设备时显示占位提示。
+ * 关联设备卡片：列出关联了本订单的设备（当前订单或历史订单含本订单号）。
+ * 行样式采用与关联订单一样的逻辑：设备卡片不带外框，状态色球居左垂直居中，
+ * 右侧两行（设备名 / 序号）水平起始位置对齐，多台设备之间用分割线隔开；
+ * 点击某台设备即进入对应设备详情页。常驻展开，不带下拉 / 收起。
  */
 @Composable
 private fun AssociatedDevicesCard(
@@ -400,28 +409,71 @@ private fun AssociatedDevicesCard(
     inPreview: Boolean,
     onDeviceClick: (Device) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(true) }
-    DetailCard(
-        backdrop = backdrop,
-        inPreview = inPreview,
-        title = "关联设备",
-        expanded = expanded,
-        onToggle = { expanded = !expanded }
-    ) {
+    StaticCard(backdrop = backdrop, inPreview = inPreview) {
+        Text(
+            text = "关联设备",
+            style = MiuixTheme.textStyles.title3,
+            color = MiuixTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         if (devices.isEmpty()) {
             EmptyHint("暂无关联设备")
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                devices.forEach { device ->
-                    DeviceCard(
-                        device = device,
-                        orderStore = orderStore,
-                        backdrop = backdrop,
-                        inPreview = inPreview,
-                        onClick = onDeviceClick
-                    )
+            devices.forEachIndexed { index, device ->
+                if (index > 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    CardDivider()
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
+                DeviceRow(
+                    device = device,
+                    orderStore = orderStore,
+                    onDeviceClick = onDeviceClick
+                )
             }
+        }
+    }
+}
+
+/**
+ * 单条关联设备行：与关联订单行同款布局——
+ * 左侧状态色球（使用中蓝 / 空闲绿）垂直居中，右侧两行内容同一起始位置。
+ */
+@Composable
+private fun DeviceRow(
+    device: Device,
+    orderStore: OrderStore,
+    onDeviceClick: (Device) -> Unit,
+) {
+    val inUse = device.computeStatus(orderStore) == DeviceStatus.IN_USE
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressable(onClick = { onDeviceClick(device) }),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatusDot(color = if (inUse) StatusInUseColor else StatusIdleColor)
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = device.nickname,
+                style = MiuixTheme.textStyles.body1,
+                color = MiuixTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = extractSequence(device.number)?.let { "序号 $it" } ?: "未编号",
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -438,14 +490,15 @@ private fun ProgressCard(
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
-    var expanded by remember(order.id) { mutableStateOf(true) }
     val nodes = order.nodes
+    // 改节点状态属于关键操作，先过生物验证，通过才写回
+    val verify = rememberBiometricVerifier()
     DetailCard(
         backdrop = backdrop,
         inPreview = inPreview,
         title = "完成进度",
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
+        // 不带下拉展开：节点列表始终完整显示
+        collapsible = false,
         headerRight = {
             ProgressRing(fraction = nodes.completedFraction())
             Spacer(modifier = Modifier.width(6.dp))
@@ -464,7 +517,12 @@ private fun ProgressCard(
                     node = node,
                     // 节点按顺序进行：前一个节点没完成时，后面的 checkbox 不可点
                     enabled = index == 0 || nodes[index - 1].state == OrderNodeState.DONE,
-                    onClick = { store.advanceNode(order.id, index) }
+                    onClick = {
+                        // 生物验证通过才改节点状态，取消 / 失败不动数据
+                        verify("验证通过后才能修改节点状态") { passed ->
+                            if (passed) store.advanceNode(order.id, index)
+                        }
+                    }
                 )
             }
         }
@@ -501,7 +559,8 @@ private fun ProgressRing(fraction: Float) {
 
 /**
  * 单个节点行：左侧节点名，点过之后下面跟上开始 / 结束时间；右侧是三态 checkbox。
- * 空白 = 未开始，半选 = 进行中（记开始时间），选中 = 已完成（再记结束时间）。
+ * 行高用 animateContentSize 平滑过渡：新增一行时间时，本行高度渐变拉长，
+ * 下方节点与分割线跟着往下滑，而不是瞬间跳位。
  */
 @Composable
 private fun NodeRow(
@@ -511,7 +570,10 @@ private fun NodeRow(
 ) {
     val onSurface = MiuixTheme.colorScheme.onSurface
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            // 只让 checkbox 响应点击（整行可点会绕过「前一节点未完成则锁定」的限制）
+            .animateContentSize(animationSpec = tween(durationMillis = 240)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(
@@ -567,14 +629,13 @@ private fun FormCard(
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
-    var expanded by remember(order.id) { mutableStateOf(true) }
     val forms = order.forms
     DetailCard(
         backdrop = backdrop,
         inPreview = inPreview,
         title = "表单进度",
-        expanded = expanded,
-        onToggle = { expanded = !expanded },
+        // 不带下拉展开：表单列表始终完整显示
+        collapsible = false,
         headerRight = {
             ProgressRing(fraction = forms.filledFraction())
             Spacer(modifier = Modifier.width(6.dp))
@@ -600,7 +661,7 @@ private fun FormCard(
 
 /**
  * 单张表单行：左侧表单名，勾选后下面跟一个填写时间；右侧是两态 checkbox（未选 / 选中）。
- * 表单之间没有先后顺序，任意一张都可独立勾选 / 撤销。
+ * 表单之间没有先后顺序，任意一张都可独立勾选 / 撤销；行高同样平滑过渡。
  */
 @Composable
 private fun FormRow(
@@ -609,7 +670,10 @@ private fun FormRow(
 ) {
     val onSurface = MiuixTheme.colorScheme.onSurface
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            // 只让 checkbox 响应点击，与节点行保持一致
+            .animateContentSize(animationSpec = tween(durationMillis = 240)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(

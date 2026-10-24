@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -29,10 +30,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,10 +56,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.text.input.KeyboardType
@@ -71,6 +81,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Filter
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -240,8 +252,9 @@ fun Modifier.pressable(
  * 标题栏右侧可放附加内容（[headerRight]，如「历史订单」、进度环），末尾是一个随展开旋转的箭头。
  * 设备详情页与订单详情页共用，保证两页卡片观感完全一致。
  *
- * @param expanded      是否展开
+ * @param expanded      是否展开（collapsible = false 时无意义，内容始终可见）
  * @param onToggle      点击整卡切换展开 / 收起
+ * @param collapsible   是否允许展开 / 收起：false 时不画箭头、内容常驻完整显示
  * @param headerRight   标题与箭头之间的附加内容（可选）
  * @param previewContent 收起态也常驻的预览内容（不参与展开动画，如关联订单的第一条）
  * @param content       展开时显示的内容
@@ -251,9 +264,10 @@ fun DetailCard(
     backdrop: Backdrop,
     inPreview: Boolean,
     title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
+    expanded: Boolean = true,
+    onToggle: () -> Unit = {},
     modifier: Modifier = Modifier,
+    collapsible: Boolean = true,
     headerRight: (@Composable RowScope.() -> Unit)? = null,
     previewContent: (@Composable ColumnScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -287,39 +301,47 @@ fun DetailCard(
                 modifier = Modifier.weight(1f)
             )
             headerRight?.invoke(this)
-            Spacer(modifier = Modifier.width(6.dp))
-            Image(
-                imageVector = MiuixIcons.Regular.ChevronForward,
-                contentDescription = if (expanded) "收起" else "展开",
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = chevron },
-                colorFilter = ColorFilter.tint(
-                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            // 不可折叠的卡片不画箭头，也没有可点击的展开暗示
+            if (collapsible) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Image(
+                    imageVector = MiuixIcons.Regular.ChevronForward,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    modifier = Modifier
+                        .size(18.dp)
+                        .graphicsLayer { rotationZ = chevron },
+                    colorFilter = ColorFilter.tint(
+                        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
                 )
-            )
+            }
         }
         // 收起态也常驻的预览内容：不参与展开动画，保证收起时卡片不空
         previewContent?.let { preview ->
             Spacer(modifier = Modifier.height(12.dp))
             preview()
         }
-        // 平滑伸缩：展开 / 收起时内容高度从 0 渐变到满，带动卡片上下边框平滑拉长，不闪现
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(tween(200)) + expandVertically(
-                expandFrom = Alignment.Top,
-                animationSpec = tween(240)
-            ),
-            exit = fadeOut(tween(160)) + shrinkVertically(
-                shrinkTowards = Alignment.Top,
-                animationSpec = tween(200)
-            )
-        ) {
-            Column {
-                Spacer(modifier = Modifier.height(12.dp))
-                content()
+        if (collapsible) {
+            // 平滑伸缩：展开 / 收起时内容高度从 0 渐变到满，带动卡片上下边框平滑拉长，不闪现
+            AnimatedVisibility(
+                visible = expanded,
+                enter = fadeIn(tween(200)) + expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = tween(240)
+                ),
+                exit = fadeOut(tween(160)) + shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(200)
+                )
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    content()
+                }
             }
+        } else {
+            Spacer(modifier = Modifier.height(12.dp))
+            content()
         }
     }
 }
@@ -411,24 +433,38 @@ fun DeviceField(
     val view = LocalView.current
     val keyboard = LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(focused) {
-        if (focused) {
-            // 等输入连接建立后再弹，避免过早调用被忽略；
-            // 只发一次显示请求：重复 show 与外部 hide 竞争会把系统输入法 insets 动画卡死
-            delay(60)
-            val window = (view.context as? Activity)?.window
-            val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-            if (controller != null) {
-                controller.show(WindowInsetsCompat.Type.ime())
-            } else {
-                keyboard?.show()
-            }
+    // 每次按下自增一下：用系统返回收起键盘后输入框仍持有焦点，focused 不会变化，
+    // 只监听 focused 会导致「再点输入框弹不起键盘」
+    var pressTick by remember { mutableStateOf(0) }
+    LaunchedEffect(focused, pressTick) {
+        if (!focused) return@LaunchedEffect
+        // 等输入连接建立后再弹，避免过早调用被忽略
+        delay(60)
+        // 键盘已经显示时不再重发 show 请求：重复 show 与外部 hide 竞争会把输入法 insets 动画卡死
+        if (ViewCompat.getRootWindowInsets(view)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        ) {
+            return@LaunchedEffect
+        }
+        val window = (view.context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (controller != null) {
+            controller.show(WindowInsetsCompat.Type.ime())
+        } else {
+            keyboard?.show()
         }
     }
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
+            // 只观察按下、不消费事件，不影响子级输入框定位光标
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    pressTick++
+                }
+            }
             .clip(RoundedCornerShape(24.dp))
             .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             .padding(horizontal = 16.dp),
@@ -502,4 +538,169 @@ private fun decodeSampledBitmap(
         BitmapFactory.decodeStream(it, null, opts)
     } ?: return null
     return bitmap.asImageBitmap()
+}
+
+/**
+ * 列表页副标题长条：磨砂圆角外框 + 标题居左 + 右侧纯图标筛选按钮。
+ * 设备页与订单页共用，保证两条长条高度、内边距与筛选按钮完全一致。
+ *
+ * @param onPositionChanged 回报顶 / 底边在整页中的 y 坐标，供筛选列表定向与定位
+ */
+@Composable
+fun ListHeader(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    title: String,
+    filterActive: Boolean,
+    onToggleFilter: () -> Unit,
+    onPositionChanged: (Dp, Dp) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .onGloballyPositioned {
+                val bounds = it.boundsInRoot()
+                onPositionChanged(
+                    with(density) { bounds.top.toDp() },
+                    with(density) { bounds.bottom.toDp() }
+                )
+            }
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(22.dp),
+                inPreview = inPreview
+            )
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MiuixTheme.textStyles.title3,
+            color = MiuixTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        // 筛选按钮：纯图标，不带圆形按钮框
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggleFilter
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                imageVector = MiuixIcons.Regular.Filter,
+                contentDescription = "筛选",
+                modifier = Modifier.size(20.dp),
+                colorFilter = ColorFilter.tint(
+                    if (filterActive) {
+                        MiuixTheme.colorScheme.primary
+                    } else {
+                        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                    }
+                )
+            )
+        }
+    }
+}
+
+/**
+ * 筛选下拉面板：标签按组平铺，组间用分割线隔开，不做子级列表；
+ * 选中项高亮并显示对号；高度超过 maxHeight 时内部上下滚动。
+ * 设备页与订单页共用，用「组下标 + 项下标」定位选中项，避免标签文字跨组重复时歧义。
+ *
+ * @param groups    按组平铺的标签文字
+ * @param active    当前选中的（组下标，项下标），null = 未筛选
+ * @param maxHeight 可用最大高度（由调用方按上下底栏界限钳制）
+ */
+@Composable
+fun FilterMenu(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    groups: List<List<String>>,
+    active: Pair<Int, Int>?,
+    maxHeight: Dp,
+    onPick: (group: Int, index: Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .width(230.dp)
+            .heightIn(max = maxHeight)
+            .clip(RoundedCornerShape(20.dp))
+            .frostedSurface(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(20.dp),
+                inPreview = inPreview
+            )
+            .padding(vertical = 6.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        groups.forEachIndexed { gi, group ->
+            // 不同筛选类型之间用分割线隔开
+            if (gi > 0) MenuDivider()
+            group.forEachIndexed { ii, label ->
+                FilterRow(
+                    text = label,
+                    selected = active == gi to ii
+                ) { onPick(gi, ii) }
+            }
+        }
+    }
+}
+
+/** 筛选面板里的分割线 */
+@Composable
+private fun MenuDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.15f))
+    )
+}
+
+/** 筛选面板里的一行标签：选中时高亮并显示对号 */
+@Composable
+private fun FilterRow(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.body1,
+            color = if (selected) {
+                MiuixTheme.colorScheme.primary
+            } else {
+                MiuixTheme.colorScheme.onSurface
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (selected) {
+            Image(
+                imageVector = MiuixIcons.Regular.Ok,
+                contentDescription = "已选",
+                modifier = Modifier.size(16.dp),
+                colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
+            )
+        }
+    }
 }

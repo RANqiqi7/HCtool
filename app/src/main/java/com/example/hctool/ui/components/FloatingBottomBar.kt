@@ -357,6 +357,9 @@ fun FloatingBottomBar(
 
         if (isBlurEnabled) {
             CompositionLocalProvider(
+                // 这份副本只用于被玻璃 pill 采样，整体被 accentColor 染色（选中的图标因此变蓝）；
+                // 标记为 tint 层，让 badge 这类不该被染色的元素自己跳过
+                LocalTabTintLayer provides true,
                 LocalFloatingBottomBarTabScale provides {
                     lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
                 }
@@ -461,32 +464,47 @@ fun FloatingBottomBar(
     }
 }
 
-/** 底部导航栏 badge 底色：蓝底白字，与项目里进行中状态蓝同一套路 */
-val BadgeBlue = Color(0xFF0A84FF)
+/**
+ * 当前是否处于「被玻璃 pill 采样的 tint 副本层」：那一层整体走 accentColor 染色，
+ * 选中的图标因此变蓝。badge 需要保持自己的底色与白字，所以在这层直接不画。
+ */
+val LocalTabTintLayer = staticCompositionLocalOf { false }
 
 /**
- * 底部导航栏图标右上角的数量 badge（设备=使用中数量、订单=进行中数量、待办=今日待办数量）。
+ * 底栏图标角标数据：数量为 0 时不显示，颜色由业务语义决定
+ * （如有使用中 / 进行中的数据时显蓝色，全部空闲或完结时显绿色）。
+ */
+data class TabBadge(
+    val count: Int,
+    val color: Color,
+)
+
+/**
+ * 底部导航栏图标右上角的数量 badge。
  * 数量为 0 时不显示；超过 99 显示 99+。非正方形时 CircleShape 自然收成胶囊，适配多位数。
+ * 在 tint 副本层里不绘制，避免被选中滑块整体染成 accentColor；
+ * 尺寸故意做到 20dp / 11sp，保证数字能穿过滑块的轻度模糊与表面遮罩读出来。
  *
  * @param count 要展示的数量
+ * @param color badge 底色（白字不变）
  */
 @Composable
-fun TabCountBadge(count: Int, modifier: Modifier = Modifier) {
-    if (count <= 0) return
+fun TabCountBadge(count: Int, color: Color, modifier: Modifier = Modifier) {
+    if (count <= 0 || LocalTabTintLayer.current) return
     val label = if (count > 99) "99+" else "$count"
     Box(
         modifier = modifier
-            .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
             .clip(CircleShape)
-            .background(BadgeBlue)
+            .background(color)
             // 一圈白边把 badge 从玻璃底栏上分出来，多位数变胶囊时也保持轮廓
-            .border(width = 1.dp, color = Color.White, shape = CircleShape)
-            .padding(horizontal = 4.dp),
+            .border(width = 1.2.dp, color = Color.White, shape = CircleShape)
+            .padding(horizontal = 5.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            style = MiuixTheme.textStyles.footnote2.copy(fontSize = 9.sp, lineHeight = 12.sp),
+            style = MiuixTheme.textStyles.footnote2.copy(fontSize = 11.sp, lineHeight = 14.sp),
             color = Color.White,
             maxLines = 1
         )

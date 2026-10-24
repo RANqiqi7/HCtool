@@ -1,29 +1,20 @@
 package com.example.hctool.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 /**
  * 应用主题：使用 miuix 的 MiuixTheme，呈现 HyperOS 风格
  *
- * 深浅色模式已对调：白色字体的配色（darkColorScheme）作为浅色模式，
- * 深色字体的配色（lightColorScheme）作为深色模式。
- *
- * @param darkTheme 是否为深色模式，默认跟随系统
- * @param content 主题内容
+ * 已去掉深色模式：不再跟随系统深浅色，固定用白色字体的那套配色
+ * （深浅色原本就是反的，白色字体的 darkColorScheme 作为本应用唯一外观）。
+ * 系统弹框（相册选择器、生物验证等）也固定走浅色主题，见 values/themes.xml。
  */
 @Composable
-fun HCtoolTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
-) {
-    val colorScheme = if (darkTheme) lightColorScheme() else darkColorScheme()
-
+fun HCtoolTheme(content: @Composable () -> Unit) {
     MiuixTheme(
-        colors = colorScheme,
+        colors = darkColorScheme(),
         content = content
     )
 }
