@@ -9,6 +9,8 @@ plugins {
     alias(libs.plugins.android.application)
     // 应用 Kotlin Compose 插件，用于支持 Jetpack Compose UI 框架
     alias(libs.plugins.kotlin.compose)
+    // 应用 Kotlin 序列化插件：为 @Serializable 数据类生成序列化器（本地存储 / 云同步）
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // ==========================================
@@ -99,6 +101,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // JSON 序列化运行时：数据模型落盘与同步报文编解码
+    implementation(libs.kotlinx.serialization.json)
+    // HTTP 客户端：与平板 Termux 上的同步服务器通信
+    implementation(libs.okhttp)
     // 生物识别用平台自带的 android.hardware.biometrics（API 28+），不引入 androidx.biometric：
     // 它要求宿主是 FragmentActivity，而旧版 androidx.fragment 会对 Activity Result 的
     // requestCode 做 16 位校验，导致一点相册 / 相机就闪退

@@ -78,6 +78,8 @@ import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.frostedSurface
 import com.example.hctool.ui.order.OrderStore
 import com.kyant.backdrop.Backdrop
+import java.io.File
+import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -528,6 +530,8 @@ fun DeviceField(
 /**
  * 按 Uri 字符串解码出降采样后的位图，供卡片/弹框预览使用。
  * 在 IO 线程解码，失败或为空返回 null。
+ * content uri 解码失败时（比如从服务器同步回来的照片，原 uri 已失效），
+ * 回退按文件名找 filesDir/device_images/ 下的本地副本。
  */
 @Composable
 fun rememberImageBitmap(uriString: String?, maxDimension: Int = 512): ImageBitmap? {
@@ -538,6 +542,7 @@ fun rememberImageBitmap(uriString: String?, maxDimension: Int = 512): ImageBitma
         } else {
             withContext(Dispatchers.IO) {
                 runCatching { decodeSampledBitmap(context, uriString, maxDimension) }.getOrNull()
+                    ?: runCatching { decodeSyncedPhotoFile(context, uriString, maxDimension) }.getOrNull()
             }
         }
     }
@@ -551,9 +556,28 @@ private fun decodeSampledBitmap(
 ): ImageBitmap? {
     val uri = Uri.parse(uriString)
     val resolver = context.contentResolver
-    // 先只读尺寸，算出合适的采样率，避免解码大图 OOM
+    return decodeWithSampling({ resolver.openInputStream(uri) }, maxDimension)
+}
+
+/** 云同步照片的本地副本：content uri 的 lastPathSegment 即文件名 */
+private fun decodeSyncedPhotoFile(
+    context: android.content.Context,
+    uriString: String,
+    maxDimension: Int,
+): ImageBitmap? {
+    val name = runCatching { Uri.parse(uriString).lastPathSegment }.getOrNull() ?: return null
+    val file = File(context.filesDir, "device_images/$name")
+    if (!file.isFile) return null
+    return decodeWithSampling({ file.inputStream() }, maxDimension)
+}
+
+/** 通用降采样解码：先探尺寸算采样率，避免解码大图 OOM；打开流的动作由调用方提供 */
+private fun decodeWithSampling(
+    openStream: () -> InputStream?,
+    maxDimension: Int,
+): ImageBitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    openStream()?.use { BitmapFactory.decodeStream(it, null, bounds) }
     var sample = 1
     while (bounds.outWidth / sample > maxDimension * 2 ||
         bounds.outHeight / sample > maxDimension * 2
@@ -561,7 +585,7 @@ private fun decodeSampledBitmap(
         sample *= 2
     }
     val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    val bitmap = resolver.openInputStream(uri)?.use {
+    val bitmap = openStream()?.use {
         BitmapFactory.decodeStream(it, null, opts)
     } ?: return null
     return bitmap.asImageBitmap()

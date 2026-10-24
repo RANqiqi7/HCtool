@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import kotlinx.serialization.Serializable
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,6 +47,7 @@ enum class OrderNodeState {
  * @param startTime 开始时间：第一次点 checkbox 时记录，空表示还没开始
  * @param endTime   结束时间：第二次点 checkbox 时记录，空表示还没完成
  */
+@Serializable
 data class OrderNode(
     val name: String,
     val startTime: String = "",
@@ -78,6 +80,7 @@ fun List<OrderNode>.completedFraction(): Float =
  * @param name     表单名称
  * @param fillTime 填写时间（勾选时记录），空表示还没填
  */
+@Serializable
 data class OrderForm(
     val name: String,
     val fillTime: String = "",
@@ -112,6 +115,7 @@ fun List<OrderForm>.filledFraction(): Float =
  * @param nodes         流程节点（详情页「完成进度」卡片按顺序展示，默认 IQC / 测试 / OQC）
  * @param forms         表单（详情页「表单进度」卡片展示，默认 使用记录表 / runcard）
  */
+@Serializable
 data class Order(
     val id: String,
     val orderNo: String,
@@ -139,14 +143,13 @@ val Order.status: OrderStatus
         OrderStatus.IN_PROGRESS
     }
 
-/**
- * 订单页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
- */
-class OrderStore {
-    /** 预置一批测试订单，覆盖两种状态；列表展示时进行中优先 */
-    val orders = mutableStateListOf(
+/** 预置数据移到了顶层函数，不能直接访问伴生对象，提供同源的 id 生成别名 */
+private fun presetNewId(): String = OrderStore.newId()
+
+/** 预置演示订单：覆盖两种状态（仅首次启动用，之后以磁盘数据为准）；列表展示时进行中优先 */
+fun defaultPresetOrders(): List<Order> = listOf(
         Order(
-            newId(), "DD-241023", "华测检测",
+            presetNewId(), "DD-241023", "华测检测",
             sampleName = "饮用水样", sampleCount = "12", sampleNo = "P2410-E",
             testCondition = "常温常湿", caseOwner = "张三",
             submitTime = "2026-10-23 10:02",
@@ -163,7 +166,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241022", "谱尼测试",
+            presetNewId(), "DD-241022", "谱尼测试",
             sampleName = "土壤样", sampleCount = "6", sampleNo = "P2410-C",
             testCondition = "低温冷藏", caseOwner = "李四",
             submitTime = "2026-10-22 09:40",
@@ -175,7 +178,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241021", "华测检测",
+            presetNewId(), "DD-241021", "华测检测",
             sampleName = "空气样", sampleCount = "8", sampleNo = "P2410-A",
             testCondition = "常温常湿", caseOwner = "张三",
             submitTime = "2026-10-21 14:15",
@@ -187,7 +190,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241020", "谱尼测试",
+            presetNewId(), "DD-241020", "谱尼测试",
             sampleName = "环境样", sampleCount = "5", sampleNo = "P2410-D",
             testCondition = "常温常湿", caseOwner = "李四",
             submitTime = "2026-10-20 08:50",
@@ -199,7 +202,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241019", "sgs 通标",
+            presetNewId(), "DD-241019", "sgs 通标",
             sampleName = "试剂样", sampleCount = "9", sampleNo = "P2410-F",
             testCondition = "低温冷藏", caseOwner = "王五",
             submitTime = "2026-10-19 10:10",
@@ -211,7 +214,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241018", "sgs 通标",
+            presetNewId(), "DD-241018", "sgs 通标",
             sampleName = "食品样", sampleCount = "20", sampleNo = "P2410-B",
             testCondition = "恒温 40℃", caseOwner = "王五",
             submitTime = "2026-10-18 08:30",
@@ -227,7 +230,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-241013", "谱尼测试",
+            presetNewId(), "DD-241013", "谱尼测试",
             sampleName = "水质样", sampleCount = "10", sampleNo = "P2410-D",
             testCondition = "常温常湿", caseOwner = "李四",
             submitTime = "2026-10-13 16:20",
@@ -243,7 +246,7 @@ class OrderStore {
             )
         ),
         Order(
-            newId(), "DD-240930", "华测检测",
+            presetNewId(), "DD-240930", "华测检测",
             sampleName = "油品样", sampleCount = "4", sampleNo = "P2409-X",
             testCondition = "高温 60℃", caseOwner = "赵六",
             submitTime = "2026-09-30 11:05",
@@ -258,7 +261,15 @@ class OrderStore {
                 OrderForm("runcard", "2026-10-03 11:00"),
             )
         ),
-    )
+)
+
+/**
+ * 订单页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
+ * 用 Compose 可观察集合，任何增删改都会自动触发界面刷新。
+ */
+class OrderStore(initialOrders: List<Order> = defaultPresetOrders()) {
+    /** 订单列表；列表展示时进行中优先 */
+    val orders = mutableStateListOf<Order>().apply { addAll(initialOrders) }
 
     /** 新增一个订单 */
     fun addOrder(order: Order) {

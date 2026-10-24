@@ -63,9 +63,44 @@ class AppSettings(context: Context) {
         sp.edit().putString(KEY_BG, uriString).apply()
     }
 
+    /* ---- 云同步配置：开关 / 服务器地址 / 访问令牌 / 上次同步结果 ---- */
+
+    private var _syncEnabled by mutableStateOf(sp.getBoolean(KEY_SYNC_ON, false))
+    val syncEnabled: Boolean get() = _syncEnabled
+    fun setSyncEnabled(on: Boolean) {
+        _syncEnabled = on
+        sp.edit().putBoolean(KEY_SYNC_ON, on).apply()
+    }
+
+    private var _serverUrl by mutableStateOf(sp.getString(KEY_SERVER_URL, "") ?: "")
+    val serverUrl: String get() = _serverUrl
+    fun setServerUrl(url: String) {
+        _serverUrl = url.trim()
+        sp.edit().putString(KEY_SERVER_URL, _serverUrl).apply()
+    }
+
+    private var _serverToken by mutableStateOf(sp.getString(KEY_SERVER_TOKEN, "") ?: "")
+    val serverToken: String get() = _serverToken
+    fun setServerToken(token: String) {
+        _serverToken = token.trim()
+        sp.edit().putString(KEY_SERVER_TOKEN, _serverToken).apply()
+    }
+
+    /** 上次同步结果的一行文案（时间 + 成功/失败原因），供设置页状态行展示 */
+    private var _lastSyncResult by mutableStateOf(sp.getString(KEY_LAST_SYNC, "") ?: "")
+    val lastSyncResult: String get() = _lastSyncResult
+    fun setLastSyncResult(text: String) {
+        _lastSyncResult = text
+        sp.edit().putString(KEY_LAST_SYNC, text).apply()
+    }
+
     private companion object {
         const val KEY_THEME = "themeMode"
         const val KEY_BG = "backgroundUri"
+        const val KEY_SYNC_ON = "syncEnabled"
+        const val KEY_SERVER_URL = "serverUrl"
+        const val KEY_SERVER_TOKEN = "serverToken"
+        const val KEY_LAST_SYNC = "lastSyncResult"
     }
 }
 

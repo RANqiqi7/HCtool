@@ -29,6 +29,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -65,10 +68,13 @@ import com.example.hctool.ui.components.GlassFab
 import com.example.hctool.ui.components.blockClicks
 import com.example.hctool.ui.components.glassSurface
 import com.example.hctool.ui.components.AppBackgroundImage
+import com.example.hctool.ui.data.LocalDataStore
+import com.example.hctool.ui.data.toDeviceSeed
 import com.example.hctool.ui.device.Device
 import com.example.hctool.ui.device.DeviceDetailScreen
 import com.example.hctool.ui.device.DeviceScreen
-import com.example.hctool.ui.device.rememberDeviceStore
+import com.example.hctool.ui.device.DeviceStore
+import com.example.hctool.ui.device.defaultDeviceSeed
 import com.example.hctool.ui.device.hideIme
 import com.example.hctool.ui.device.showIme
 import com.example.hctool.ui.order.AddOrderDialog
@@ -77,8 +83,10 @@ import com.example.hctool.ui.order.OrderDetailScreen
 import com.example.hctool.ui.order.OrderScreen
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.currentSubmitTime
-import com.example.hctool.ui.order.rememberOrderStore
+import com.example.hctool.ui.order.defaultPresetOrders
 import com.example.hctool.ui.settings.SettingsScreen
+import com.example.hctool.ui.sync.SyncManager
+import com.example.hctool.ui.sync.rememberSyncManager
 import com.example.hctool.ui.theme.HCtoolTheme
 import com.example.hctool.ui.theme.LocalAppSettings
 import com.example.hctool.ui.theme.rememberAppSettings
@@ -96,7 +104,10 @@ import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.SearchDevice
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -116,7 +127,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalCoroutinesApi::class)
 @Composable
 fun MainScreen() {
     // 当前选中的标签下标，赋值后会触发重组刷新界面
@@ -131,14 +142,20 @@ fun MainScreen() {
     // 两个页面平铺，左右滑动切换
     val pagerState = rememberPagerState(pageCount = { items.size })
     val scope = rememberCoroutineScope()
-    // 设备页数据：提升到 pager 外层持有，翻页销毁重建也不丢数据
-    val deviceStore = rememberDeviceStore()
+    // 数据商店：优先从磁盘快照恢复（首次安装无文件时用预置演示数据作种子）；
+    // 提升到 pager 外层持有，翻页销毁重建也不丢数据
+    val context = LocalContext.current
+    val initialSnapshot = remember { LocalDataStore.load(context) }
+    // 设备页数据：地图 + 设备 + 选中地图，整组从种子恢复
+    val deviceStore = remember { DeviceStore(initialSnapshot?.toDeviceSeed() ?: defaultDeviceSeed()) }
     // 设备页是否有子级弹窗（新增设备 / 地图编辑）打开：打开时禁止主界面左右滑动切页
     var deviceDialogOpen by remember { mutableStateOf(false) }
     // 当前打开详情的设备：非空时在设备页之上滑入整屏详情页浮层
     var detailDevice by remember { mutableStateOf<Device?>(null) }
-    // 订单页数据：提升到 pager 外层持有，翻页销毁重建也不丢数据
-    val orderStore = rememberOrderStore()
+    // 订单页数据：同样从快照恢复，无文件时用预置订单
+    val orderStore = remember {
+        OrderStore(initialSnapshot?.orders?.ifEmpty { null } ?: defaultPresetOrders())
+    }
     // 新增订单弹窗开关（订单页点底栏加号弹出）
     var addOrderOpen by remember { mutableStateOf(false) }
     // 当前打开详情的订单：非空时在订单页之上滑入整屏详情页浮层
@@ -149,6 +166,9 @@ fun MainScreen() {
     // 设置页开关：设备页顶栏齿轮按钮打开，整屏浮层盖住主页面
     var settingsOpen by remember { mutableStateOf(false) }
 
+    // 云同步调度：配置在设置页「云同步」卡片里填，未开启时内部静默跳过
+    val syncManager = rememberSyncManager(LocalAppSettings.current, deviceStore, orderStore)
+
     // 离设备页（翻页 / 进详情）时自动退出添加模式，避免减号留在其它页上
     LaunchedEffect(selectedIndex) {
         if (selectedIndex != 0) deviceAddMode = false
@@ -157,6 +177,32 @@ fun MainScreen() {
     // 翻页 → 同步底栏高亮与顶栏标题
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { selectedIndex = it }
+    }
+
+    // 数据变更 → 防抖 1.5s 落盘：杀进程重启不丢数据；
+    // 编码出的 JSON 同时是云同步报文（SyncManager 复用同一份编码）
+    LaunchedEffect(deviceStore, orderStore) {
+        snapshotFlow {
+            LocalDataStore.encode(LocalDataStore.snapshotOf(deviceStore, orderStore))
+        }
+            .distinctUntilChanged()
+            .debounce(1500)
+            .collect { text -> LocalDataStore.saveJson(context, text) }
+    }
+
+    // 启动后自动拉一次（稍等落地，避开首帧重组高峰）
+    LaunchedEffect(Unit) {
+        delay(800)
+        syncManager.syncNow()
+    }
+    // 数据变更 → 防抖 2s 自动同步（拉平 + 推平，冲突时弹窗让用户裁决）
+    LaunchedEffect(syncManager) {
+        snapshotFlow {
+            LocalDataStore.encode(LocalDataStore.snapshotOf(deviceStore, orderStore))
+        }
+            .distinctUntilChanged()
+            .debounce(2000)
+            .collect { syncManager.syncNow() }
     }
 
     // 底色：先铺一层纯色，避免采样区域外出现透明像素
@@ -610,11 +656,44 @@ fun MainScreen() {
             SettingsScreen(
                 backdrop = imageBackdrop,
                 inPreview = inPreview,
+                syncManager = syncManager,
                 onBack = { settingsOpen = false },
                 modifier = Modifier.fillMaxSize()
             )
         }
+
+        // 数据冲突弹窗：本机与服务器都有改动时二选一（关掉前不允许其它同步）；
+        // 放在最外层 Box 末尾，保证盖在设置页等所有浮层之上
+        if (syncManager.conflictPending) {
+            SyncConflictDialog(syncManager)
+        }
     }
+}
+
+/** 同步冲突裁决弹窗：用服务器数据覆盖本机 / 把本机数据强推上云，选完即执行 */
+@Composable
+private fun SyncConflictDialog(syncManager: SyncManager) {
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = { }, // 必须二选一，点外部不关
+        title = { Text(text = "数据冲突", style = MiuixTheme.textStyles.title3) },
+        text = {
+            Text(
+                text = "本机与服务器都有改动，请选择保留哪一边：",
+                style = MiuixTheme.textStyles.body1
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { scope.launch { syncManager.resolveConflict(useServer = true) } }) {
+                Text(text = "用服务器数据覆盖本机", style = MiuixTheme.textStyles.body1)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { scope.launch { syncManager.resolveConflict(useServer = false) } }) {
+                Text(text = "把本机数据强推上云", style = MiuixTheme.textStyles.body1)
+            }
+        }
+    )
 }
 
 @Preview(showBackground = true, showSystemUi = true)

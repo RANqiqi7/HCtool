@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.example.hctool.ui.order.OrderNodeState
 import com.example.hctool.ui.order.OrderStore
+import kotlinx.serialization.Serializable
 import java.util.UUID
 
 /**
@@ -37,6 +38,7 @@ val DeviceBlockColor = Color(0xFF34C759)
  * @param endTime     结束时间（设备侧记录的回退值）；订单在订单库中时，
  *                    界面优先取该订单 OQC 节点的结束时间
  */
+@Serializable
 data class DeviceOrder(
     val orderNo: String,
     val sampleBatch: String,
@@ -65,6 +67,7 @@ data class DeviceOrder(
  * @param historyOrders        历史测过的关联订单（空闲状态展开查看）；
  *                             与 currentOrders 同构，保证关联订单列表行格式统一
  */
+@Serializable
 data class Device(
     val id: String,
     val nickname: String,
@@ -88,6 +91,7 @@ data class Device(
  * @param rows 行数
  * @param cols 列数
  */
+@Serializable
 data class DeviceMap(
     val id: String,
     val name: String,
@@ -145,20 +149,26 @@ fun extractSequence(number: String): String? {
 }
 
 /**
- * 设备页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
- * 用 Compose 可观察集合，任何增删改都会自动触发界面刷新。
+ * DeviceStore 的初始种子：地图 + 设备 + 当前选中地图。
+ * 首次启动用 [defaultDeviceSeed]，从磁盘快照恢复时用快照数据构造。
  */
-class DeviceStore {
-    /** 预置三张地图，便于测试多地图平铺切换与地图名联动 */
-    private val mainMap = DeviceMap(id = newId(), name = "主地图", rows = 4, cols = 4)
-    private val hallMap = DeviceMap(id = newId(), name = "一厅", rows = 3, cols = 5)
-    private val labMap = DeviceMap(id = newId(), name = "实验室", rows = 5, cols = 6)
+data class DeviceSeed(
+    val maps: List<DeviceMap>,
+    val devices: List<Device>,
+    val selectedMapId: String,
+)
 
-    /** 所有地图 */
-    val maps = mutableStateListOf(mainMap, hallMap, labMap)
-
-    /** 所有设备（跨地图）：预置一批测试数据，覆盖两种状态与多张地图，并填充详情页字段 */
-    val devices = mutableStateListOf(
+/** 预置演示数据：三张地图 + 一批设备，覆盖两种状态与多张地图（仅首次启动用，之后以磁盘数据为准） */
+fun defaultDeviceSeed(): DeviceSeed {
+    // 局部别名：预置数据里的 newId() 改指向伴生对象，保持写法不变
+    fun newId() = DeviceStore.newId()
+    val mainMap = DeviceMap(id = DeviceStore.newId(), name = "主地图", rows = 4, cols = 4)
+    val hallMap = DeviceMap(id = DeviceStore.newId(), name = "一厅", rows = 3, cols = 5)
+    val labMap = DeviceMap(id = DeviceStore.newId(), name = "实验室", rows = 5, cols = 6)
+    return DeviceSeed(
+        maps = listOf(mainMap, hallMap, labMap),
+        selectedMapId = mainMap.id,
+        devices = listOf(
         Device(
             newId(), "采集盒 A", "SB01", "HC-100",
             mapId = mainMap.id, cell = 0,
@@ -289,10 +299,23 @@ class DeviceStore {
                 DeviceOrder("DD-240806", "P2408-X", "2026-08-06", "2026-08-13")
             )
         ),
+        )
     )
+}
+
+/**
+ * 设备页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
+ * 用 Compose 可观察集合，任何增删改都会自动触发界面刷新。
+ */
+class DeviceStore(seed: DeviceSeed = defaultDeviceSeed()) {
+    /** 所有地图 */
+    val maps = mutableStateListOf<DeviceMap>().apply { addAll(seed.maps) }
+
+    /** 所有设备（跨地图） */
+    val devices = mutableStateListOf<Device>().apply { addAll(seed.devices) }
 
     /** 当前选中的地图 id */
-    var selectedMapId by mutableStateOf(mainMap.id)
+    var selectedMapId by mutableStateOf(seed.selectedMapId)
 
     /** 当前选中的地图对象 */
     val selectedMap: DeviceMap

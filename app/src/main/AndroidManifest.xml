@@ -5,6 +5,9 @@
     <!-- 修改订单节点状态前需要生物识别验证（指纹 / 面容） -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- 云同步：访问平板 Termux 上的同步服务器 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- 拍照（ACTION_IMAGE_CAPTURE）在 Android 11+ 需要声明 intent 可见性 -->
     <queries>
         <intent>
@@ -12,6 +15,7 @@
         </intent>
     </queries>
 
+    <!-- 同步地址是内网/Tailscale 隧道的 HTTP，需要允许明文流量（usesCleartextTraffic）；对公网裸奔请换 HTTPS 反代 -->
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -20,7 +24,8 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HCtool">
+        android:theme="@style/Theme.HCtool"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

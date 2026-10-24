@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.hctool.BuildConfig
@@ -54,10 +56,13 @@ import com.example.hctool.R
 import com.example.hctool.ui.components.AppBackgroundImage
 import com.example.hctool.ui.components.glassSurface
 import com.example.hctool.ui.device.CardDivider
+import com.example.hctool.ui.device.DeviceField
 import com.example.hctool.ui.device.GlassIconButton
 import com.example.hctool.ui.device.InfoRow
 import com.example.hctool.ui.device.StaticCard
 import com.example.hctool.ui.device.pressable
+import com.example.hctool.ui.sync.SyncManager
+import com.example.hctool.ui.theme.AppSettings
 import com.example.hctool.ui.theme.LocalAppSettings
 import com.example.hctool.ui.theme.ThemeMode
 import com.example.hctool.ui.theme.label
@@ -82,10 +87,11 @@ private const val GITHUB_URL = "https://github.com/RANqiqi7/HCtool"
 /**
  * 设置页：设备页顶栏齿轮按钮打开，整屏从右侧滑入、盖住主页面。
  *
- * 三张磨砂卡片自上而下：
+ * 四张磨砂卡片自上而下：
  * - 关于：应用图标 + 名称 + 版本号 + 构建日期 + 作者 + GitHub 链接（点击用浏览器打开）；
  * - 背景：当前背景缩略图 + 「更换背景」（系统相册选图，持久化 Uri）/「恢复默认」；
  * - 主题：跟随系统 / 浅色 / 深色 三档单选，选中项右侧打勾。
+ * - 云同步：同步开关 + 服务器地址 / 访问令牌输入 + 立即同步按钮 + 状态行。
  *
  * 主题与背景都写进 [LocalAppSettings]，改完整站即时生效并落盘，重启保留。
  * 与设备详情同理：浮层自绘背景图、置于 imageBackdrop 之外采样，避免自采样崩溃。
@@ -94,6 +100,7 @@ private const val GITHUB_URL = "https://github.com/RANqiqi7/HCtool"
 fun SettingsScreen(
     backdrop: Backdrop,
     inPreview: Boolean,
+    syncManager: SyncManager,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -186,6 +193,12 @@ fun SettingsScreen(
                     inPreview = inPreview,
                     current = settings.themeMode,
                     onPick = { settings.setThemeMode(it) }
+                )
+                SyncCard(
+                    backdrop = backdrop,
+                    inPreview = inPreview,
+                    settings = settings,
+                    syncManager = syncManager
                 )
             }
 
@@ -480,6 +493,118 @@ private fun SettingButton(
             text = text,
             style = MiuixTheme.textStyles.body1,
             color = MiuixTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/** 云同步卡片：开关 + 服务器地址 / 令牌 + 立即同步 + 状态行。 */
+@Composable
+private fun SyncCard(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    settings: AppSettings,
+    syncManager: SyncManager,
+) {
+    val scope = rememberCoroutineScope()
+    StaticCard(backdrop = backdrop, inPreview = inPreview) {
+        Text(
+            text = "云同步",
+            style = MiuixTheme.textStyles.title3,
+            color = MiuixTheme.colorScheme.onSurface,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        // 开关行：启用后启动自动拉取、改动约 2 秒后自动推送
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "启用同步",
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "启动自动拉取，改动后自动推送",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                )
+            }
+            MiniSwitch(checked = settings.syncEnabled) { settings.setSyncEnabled(it) }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        DeviceField(
+            hint = "服务器地址，如 http://100.x.y.z:8080",
+            value = settings.serverUrl,
+            onValueChange = { settings.setServerUrl(it) },
+            keyboardType = KeyboardType.Uri
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        DeviceField(
+            hint = "访问令牌（服务器 config.json 里的 token）",
+            value = settings.serverToken,
+            onValueChange = { settings.setServerToken(it) }
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SettingButton(
+            backdrop = backdrop,
+            inPreview = inPreview,
+            text = if (syncManager.isSyncing) "同步中…" else "立即同步",
+            onClick = {
+                if (!syncManager.isSyncing) scope.launch { syncManager.syncNow() }
+            }
+        )
+        // 状态行：上次同步时间与结果（成功条数 / 失败原因由 SyncManager 写入）
+        if (settings.lastSyncResult.isNotBlank()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = settings.lastSyncResult,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+
+/** 小号滑动开关（与全局磨砂风配套）：开=主色底，关=半透灰底，白圆点左右滑动。 */
+@Composable
+private fun MiniSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    // 圆点左边距比例：0f = 关，1f = 开
+    val fraction by animateFloatAsState(
+        targetValue = if (checked) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "miniSwitch"
+    )
+    Box(
+        modifier = Modifier
+            .width(48.dp)
+            .height(28.dp)
+            .clip(CircleShape)
+            .background(
+                if (checked) {
+                    MiuixTheme.colorScheme.primary
+                } else {
+                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.20f)
+                }
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { onCheckedChange(!checked) }
+            ),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(start = 3.dp)
+                .offset(x = (20.dp) * fraction)
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(Color.White)
         )
     }
 }
