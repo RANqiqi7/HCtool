@@ -59,7 +59,8 @@ data class DeviceOrder(
  * @param completedFormCount   已完成表单数量
  * @param totalFormCount       表单总数
  * @param testingSampleBatches 在测样品批数
- * @param lastRunTime          上次运行时间（展示用字符串）
+ * @param lastRunTime          上次运行时间的设备侧回退值（关联订单不在订单库时才用，
+ *                             展示时优先取关联订单测试节点的结束时间，见 computeLastRunTime）
  * @param currentOrders        正在测试的关联订单（使用中状态展示）
  * @param historyOrders        历史测过的关联订单（空闲状态展开查看）；
  *                             与 currentOrders 同构，保证关联订单列表行格式统一
@@ -106,6 +107,25 @@ fun Device.computeStatus(orderStore: OrderStore): DeviceStatus {
             ?.any { it.state == OrderNodeState.IN_PROGRESS } == true
     }
     return if (testing) DeviceStatus.IN_USE else DeviceStatus.IDLE
+}
+
+/**
+ * 上次运行时间派生：取最近一个关联订单（当前 + 历史）里「测试」节点的结束时间。
+ * 订单按编号（DD-yyMMDD 前缀）升序即时间序，取最大单号里有结束时间的测试节点；
+ * 关联订单都不在订单库（多为纯历史单）时回退到设备侧存储的 lastRunTime，
+ * 与 computeStatus 同一套「渲染时派生 + 库缺失回退」的路子。
+ */
+fun Device.computeLastRunTime(orderStore: OrderStore): String {
+    val latest = (currentOrders + historyOrders)
+        .sortedBy { it.orderNo }
+        .lastOrNull { ref ->
+            orderStore.findByOrderNo(ref.orderNo)
+                ?.nodes?.firstOrNull { it.name == "测试" }?.endTime?.isNotBlank() == true
+        }
+    return latest?.let { ref ->
+        orderStore.findByOrderNo(ref.orderNo)
+            ?.nodes?.firstOrNull { it.name == "测试" }?.endTime
+    }?.takeIf { it.isNotBlank() } ?: lastRunTime
 }
 
 /**

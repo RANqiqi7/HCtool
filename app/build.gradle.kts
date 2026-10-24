@@ -1,6 +1,9 @@
 // ==========================================
 // 插件配置块：声明本项目使用的 Gradle 插件
 // ==========================================
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     // 应用 Android 应用插件，用于构建 Android 应用
     alias(libs.plugins.android.application)
@@ -35,6 +38,13 @@ android {
         versionCode = 1
         // 版本名称：面向用户显示的版本号字符串
         versionName = "1.0"
+
+        // 构建日期：配置阶段取当前时间，供设置页「关于」卡片展示（精确到分钟）
+        buildConfigField(
+            "String",
+            "BUILD_DATE",
+            "\"${SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())}\""
+        )
 
         // 测试运行器：指定用于运行仪器化测试的测试运行器
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -72,6 +82,8 @@ android {
     buildFeatures {
         // 启用 Compose：开启 Jetpack Compose UI 框架支持
         compose = true
+        // 启用 BuildConfig：生成 BuildConfig 类，供设置页读取 VERSION_NAME / BUILD_DATE
+        buildConfig = true
     }
 }
 

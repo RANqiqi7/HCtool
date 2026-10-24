@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.example.hctool.R
 import com.example.hctool.ui.components.BiometricVerify
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.components.AppBackgroundImage
 import com.example.hctool.ui.components.rememberBiometricVerifier
 import com.example.hctool.ui.device.CardDivider
 import com.example.hctool.ui.device.DetailCard
@@ -170,20 +171,7 @@ fun OrderDetailScreen(
                 ) { }
         ) {
             // 自绘背景图：遮住下层订单页；预览态退化为纯色
-            if (!inPreview) {
-                Image(
-                    painter = painterResource(R.drawable.bg_main),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.White)
-                )
-            }
+            AppBackgroundImage(modifier = Modifier.fillMaxSize(), inPreview = inPreview)
 
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

@@ -63,10 +63,14 @@ enum class OrderFilterTag(val status: OrderStatus, val label: String) {
  * 副标题栏在屏幕上半部分时向下展开、反之向上，边框不越过悬浮顶栏与底栏。
  * 卡片主标题 = 订单号，副标题 = 订单状态（进行中 / 已完结），
  * 下方与设备卡片一样留有订单图片展示位；进行中订单优先排在前面。
+ * 顶栏搜索框（MainActivity 持有）的关键词实时筛选：
+ * 订单号 / 客户代称 / 样品名称 / 样品编号 / 测试条件 / Case Owner 任一字段
+ * 忽略大小写包含匹配即命中，与状态筛选叠加生效。
  *
  * @param store        订单数据（提升到 pager 外层持有）
  * @param backdrop     玻璃采样源（用 imageBackdrop，只采背景图）
  * @param inPreview    预览态退化玻璃为纯色
+ * @param query        顶栏搜索框的当前关键词（空串 = 不搜索）
  * @param onOrderClick 点击某张订单卡片（由 MainActivity 弹出订单详情页）
  */
 @Composable
@@ -74,6 +78,7 @@ fun OrderScreen(
     store: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    query: String,
     onOrderClick: (Order) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -95,9 +100,22 @@ fun OrderScreen(
     // 共享筛选面板用「组下标 + 项下标」标记选中项
     val activeIndex = activeFilter?.let { 0 to OrderFilterTag.entries.indexOf(it) }
 
+    // 搜索关键词：忽略大小写，任一关键字段包含即命中；空白视为不搜索
+    val kw = query.trim()
+    val searchedOrders = if (kw.isEmpty()) {
+        store.sortedOrders()
+    } else {
+        store.sortedOrders().filter { order ->
+            listOf(
+                order.orderNo, order.customer, order.sampleName,
+                order.sampleNo, order.testCondition, order.caseOwner
+            ).any { it.contains(kw, ignoreCase = true) }
+        }
+    }
+    // 状态筛选在搜索结果上叠加生效
     val shownOrders = activeFilter?.let { tag ->
-        store.sortedOrders().filter { it.status == tag.status }
-    } ?: store.sortedOrders()
+        searchedOrders.filter { it.status == tag.status }
+    } ?: searchedOrders
 
     // 展开方向：副标题栏中心在屏幕上半部分 → 向下展开，反之向上
     val headerCenter = (headerTop + headerBottom) / 2
@@ -147,7 +165,7 @@ fun OrderScreen(
 
             OrderMasonry(
                 orders = shownOrders,
-                filtered = activeFilter != null,
+                filtered = activeFilter != null || kw.isNotEmpty(),
                 backdrop = backdrop,
                 inPreview = inPreview,
                 onOrderClick = onOrderClick

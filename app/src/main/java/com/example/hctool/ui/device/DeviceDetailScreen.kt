@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.hctool.R
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.components.AppBackgroundImage
 import com.example.hctool.ui.order.OrderStatus
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.status
@@ -70,7 +71,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 结构（自上而下）：
  * - 顶栏：左上返回按钮、右上编辑按钮，均为玻璃按钮（带按压轻微收缩）；
  * - 头部框：圆角磨砂玻璃，双行——第一行粗字设备名 + 居右状态圆点，第二行编号 / 序号；
- * - 四个大卡片上下排列：基础信息、关联订单、表单情况、更多信息，
+ * - 三个大卡片上下排列：基础信息、关联订单、更多信息，
  *   统一磨砂玻璃 + 点击轻微收缩 + 平滑伸缩（点击展开 / 收起）。
  *
  * 整页从右侧滑入，返回时先滑出再移除；详情页自绘一张同款背景图，
@@ -137,20 +138,7 @@ fun DeviceDetailScreen(
                 ) { }
         ) {
             // 自绘背景图：遮住下层设备页；预览态退化为纯色
-            if (!inPreview) {
-                Image(
-                    painter = painterResource(R.drawable.bg_main),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.White)
-                )
-            }
+            AppBackgroundImage(modifier = Modifier.fillMaxSize(), inPreview = inPreview)
 
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -168,6 +156,7 @@ fun DeviceDetailScreen(
             ) {
                 BasicInfoCard(
                     device = device,
+                    orderStore = orderStore,
                     backdrop = backdrop,
                     inPreview = inPreview
                 )
@@ -177,11 +166,6 @@ fun DeviceDetailScreen(
                     backdrop = backdrop,
                     inPreview = inPreview,
                     onOrderClick = onOrderClick
-                )
-                FormStatusCard(
-                    device = device,
-                    backdrop = backdrop,
-                    inPreview = inPreview
                 )
                 MoreInfoCard(
                     device = device,
@@ -284,11 +268,14 @@ private fun DetailTopBar(
 
 /**
  * 基础信息卡片：居左多行显示设备型号 / 待完成表单数量 / 在测样品批数 / 上次运行时间。
+ * 上次运行时间不读静态字段，实时取最近一个关联订单测试节点的结束时间
+ * （computeLastRunTime，订单不在库时回退设备侧存储值）；
  * 设备照片已移到「更多信息」卡片里。
  */
 @Composable
 private fun BasicInfoCard(
     device: Device,
+    orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
 ) {
@@ -306,7 +293,7 @@ private fun BasicInfoCard(
             InfoRow("设备型号", device.model.ifBlank { "—" })
             InfoRow("待完成表单", "${device.pendingFormCount} 份")
             InfoRow("在测样品批数", "${device.testingSampleBatches} 批")
-            InfoRow("上次运行时间", device.lastRunTime.ifBlank { "—" })
+            InfoRow("上次运行时间", device.computeLastRunTime(orderStore).ifBlank { "—" })
         }
     }
 }
@@ -439,51 +426,6 @@ private fun OrderEntryRow(entry: OrderEntry, onOrderClick: (String) -> Unit) {
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.75f)
             )
-        }
-    }
-}
-
-/**
- * 表单情况卡片：顶部完成率进度条，下方多行显示待完成 / 已完成 / 总数 / 完成率。
- */
-@Composable
-private fun FormStatusCard(
-    device: Device,
-    backdrop: Backdrop,
-    inPreview: Boolean,
-) {
-    val total = device.totalFormCount
-    val done = device.completedFormCount
-    val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-    val percent = (fraction * 100).toInt()
-    DetailCard(
-        backdrop = backdrop,
-        inPreview = inPreview,
-        title = "表单情况",
-        // 不带下拉展开：内容始终完整显示
-        collapsible = false
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // 完成率进度条
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(fraction)
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(MiuixTheme.colorScheme.primary)
-                )
-            }
-            InfoRow("待完成表单", "${device.pendingFormCount} 份")
-            InfoRow("已完成表单", "$done 份")
-            InfoRow("表单总数", "$total 份")
-            InfoRow("完成率", "$percent%")
         }
     }
 }

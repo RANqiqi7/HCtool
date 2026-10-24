@@ -3,6 +3,7 @@ package com.example.hctool.ui.device
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.app.Activity
+import android.view.View
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -63,6 +64,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -415,6 +417,43 @@ fun EmptyHint(text: String) {
 }
 
 /**
+ * 调起软键盘（已显示则跳过）：部分机型 / edge-to-edge 下 Compose 输入框聚焦
+ * 不会自动弹键盘，聚焦后用 InsetsController 主动显示（比 SoftwareKeyboardController 更可靠）。
+ * 键盘已经显示时绝不重发 show 请求：重复 show 与外部 hide 竞争会把输入法
+ * insets 动画 leash 卡死，之后全系统所有输入框都弹不起键盘。
+ */
+fun showIme(view: View, keyboard: SoftwareKeyboardController?) {
+    if (ViewCompat.getRootWindowInsets(view)
+            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+    ) {
+        return
+    }
+    val window = (view.context as? Activity)?.window
+    val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+    if (controller != null) {
+        controller.show(WindowInsetsCompat.Type.ime())
+    } else {
+        keyboard?.show()
+    }
+}
+
+/** 收起软键盘（未显示则跳过，理由同 showIme：无谓的 hide 请求同样会参与竞争） */
+fun hideIme(view: View, keyboard: SoftwareKeyboardController?) {
+    if (ViewCompat.getRootWindowInsets(view)
+            ?.isVisible(WindowInsetsCompat.Type.ime()) != true
+    ) {
+        return
+    }
+    val window = (view.context as? Activity)?.window
+    val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+    if (controller != null) {
+        controller.hide(WindowInsetsCompat.Type.ime())
+    } else {
+        keyboard?.hide()
+    }
+}
+
+/**
  * 圆角输入栏（与顶部搜索框同款外观）：提示词作为 placeholder 显示在栏内，
  * 不计入实际输入内容。基于 BasicTextField，聚焦后主动调起软键盘。
  *
@@ -429,7 +468,7 @@ fun DeviceField(
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     // 部分机型/edge-to-edge 下 Compose 输入框聚焦不会自动弹键盘：
-    // 聚焦后用 InsetsController 主动显示 IME（比 SoftwareKeyboardController 更可靠）
+    // 聚焦后走带守卫的 showIme 主动显示（已显示则跳过，防 show/hide 竞争卡死输入法）
     val view = LocalView.current
     val keyboard = LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
@@ -440,19 +479,7 @@ fun DeviceField(
         if (!focused) return@LaunchedEffect
         // 等输入连接建立后再弹，避免过早调用被忽略
         delay(60)
-        // 键盘已经显示时不再重发 show 请求：重复 show 与外部 hide 竞争会把输入法 insets 动画卡死
-        if (ViewCompat.getRootWindowInsets(view)
-                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-        ) {
-            return@LaunchedEffect
-        }
-        val window = (view.context as? Activity)?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-        if (controller != null) {
-            controller.show(WindowInsetsCompat.Type.ime())
-        } else {
-            keyboard?.show()
-        }
+        showIme(view, keyboard)
     }
     Box(
         modifier = modifier

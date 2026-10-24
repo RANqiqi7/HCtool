@@ -28,9 +28,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,11 +62,15 @@ import com.example.hctool.ui.components.FloatingBottomBar
 import com.example.hctool.ui.components.FloatingBottomBarItem
 import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.GlassFab
+import com.example.hctool.ui.components.blockClicks
 import com.example.hctool.ui.components.glassSurface
+import com.example.hctool.ui.components.AppBackgroundImage
 import com.example.hctool.ui.device.Device
 import com.example.hctool.ui.device.DeviceDetailScreen
 import com.example.hctool.ui.device.DeviceScreen
 import com.example.hctool.ui.device.rememberDeviceStore
+import com.example.hctool.ui.device.hideIme
+import com.example.hctool.ui.device.showIme
 import com.example.hctool.ui.order.AddOrderDialog
 import com.example.hctool.ui.order.Order
 import com.example.hctool.ui.order.OrderDetailScreen
@@ -73,7 +78,10 @@ import com.example.hctool.ui.order.OrderScreen
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.currentSubmitTime
 import com.example.hctool.ui.order.rememberOrderStore
+import com.example.hctool.ui.settings.SettingsScreen
 import com.example.hctool.ui.theme.HCtoolTheme
+import com.example.hctool.ui.theme.LocalAppSettings
+import com.example.hctool.ui.theme.rememberAppSettings
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.basic.Icon
@@ -86,8 +94,9 @@ import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.ListView
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.SearchDevice
-import top.yukonga.miuix.kmp.icon.extended.Tasks
+import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -95,8 +104,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            HCtoolTheme {
-                MainScreen()
+            // 全局设置（主题模式 / 自定义背景）在此创建一份，向下提供；
+            // HCtoolTheme 读它决定深浅色，背景绘制与设置页也读同一份
+            val settings = rememberAppSettings()
+            CompositionLocalProvider(LocalAppSettings provides settings) {
+                HCtoolTheme {
+                    MainScreen()
+                }
             }
         }
     }
@@ -108,15 +122,13 @@ fun MainScreen() {
     // 当前选中的标签下标，赋值后会触发重组刷新界面
     var selectedIndex by remember { mutableStateOf(0) }
     // 标签文字与图标保持不变（两个列表按下标一一对应）
-    val items = listOf("设备", "订单", "待办")
+    val items = listOf("设备", "订单")
     val icons = listOf(
         MiuixIcons.Regular.SearchDevice,
-        MiuixIcons.Regular.ListView,
-        MiuixIcons.Regular.Tasks
+        MiuixIcons.Regular.ListView
     )
 
-    // 三个页面平铺，左右滑动切换
-    val pageTexts = listOf("设备管理页面", "订单列表页面", "待办事项页面")
+    // 两个页面平铺，左右滑动切换
     val pagerState = rememberPagerState(pageCount = { items.size })
     val scope = rememberCoroutineScope()
     // 设备页数据：提升到 pager 外层持有，翻页销毁重建也不丢数据
@@ -134,6 +146,8 @@ fun MainScreen() {
     // 设备页「添加设备」模式：右下角加号按下后变减号，网格上所有空格子亮加号；
     // 每完成一台添加其他加号保留，可连续添加；再按减号才关闭全部加号
     var deviceAddMode by remember { mutableStateOf(false) }
+    // 设置页开关：设备页顶栏齿轮按钮打开，整屏浮层盖住主页面
+    var settingsOpen by remember { mutableStateOf(false) }
 
     // 离设备页（翻页 / 进详情）时自动退出添加模式，避免减号留在其它页上
     LaunchedEffect(selectedIndex) {
@@ -175,9 +189,14 @@ fun MainScreen() {
     // 预览里把玻璃退化成纯色块并跳过背景图，保证实时渲染能出图，真机不受影响
     val inPreview = LocalInspectionMode.current
 
-    // 顶部搜索：false = 只显示标题，true = 输入框向左展开
+    // 顶部搜索：false = 只显示标题，true = 输入框向左展开（仅订单页有此按钮）
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // 搜索只属于订单页：离开订单页（翻页 / 进详情）时自动收起搜索面板，
+    // searchWasOpen 守卫会同步清焦点与收键盘
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex != 1) searching = false
+    }
     // 展开进度：同时驱动标题框收缩、输入框展开的宽度与透明度
     val searchExpand by animateFloatAsState(
         targetValue = if (searching) 1f else 0f,
@@ -187,19 +206,24 @@ fun MainScreen() {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val rootView = LocalView.current
 
     // 展开后自动聚焦并弹键盘；仅当搜索真正打开过、收起时才释放焦点/收键盘，
-    // 避免初始或无关重组误调 clearFocus/hide 打断弹窗内输入框的输入法
+    // 避免初始或无关重组误调 clearFocus/hide 打断弹窗内输入框的输入法；
+    // show/hide 都走带可见性守卫的 showIme/hideIme（与 DeviceField 同一套），
+    // 杜绝在键盘已显示 / 未显示时重发请求——竞争会把输入法 insets 动画卡死
     var searchWasOpen by remember { mutableStateOf(false) }
     LaunchedEffect(searching) {
         if (searching) {
             searchWasOpen = true
             focusRequester.requestFocus()
-            keyboard?.show()
+            // 等输入连接建立后再弹，与 DeviceField 同基准
+            delay(60)
+            showIme(rootView, keyboard)
         } else if (searchWasOpen) {
             searchWasOpen = false
             focusManager.clearFocus()
-            keyboard?.hide()
+            hideIme(rootView, keyboard)
             query = ""
         }
     }
@@ -225,23 +249,19 @@ fun MainScreen() {
                         .layerBackdrop(imageBackdrop)
                 ) {
                     // 预览里不加载这张 2MB 的背景图，避免 layoutlib 解码超时导致渲染失败
-                    if (!inPreview) {
-                        Image(
-                            painter = painterResource(R.drawable.bg_main),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
+                    AppBackgroundImage(
+                        modifier = Modifier.fillMaxSize(),
+                        inPreview = inPreview
+                    )
                 }
 
                 // 页面铺满整屏：不再为顶栏预留高度，内容可以一直延伸到状态栏下方
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    // 子级弹窗 / 设备详情页 / 订单详情页 / 新增订单弹窗打开时锁定左右切换
+                    // 子级弹窗 / 设备详情页 / 订单详情页 / 新增订单弹窗 / 设置页打开时锁定左右切换
                     userScrollEnabled = !deviceDialogOpen && detailDevice == null &&
-                        detailOrder == null && !addOrderOpen
+                        detailOrder == null && !addOrderOpen && !settingsOpen
                 ) {
                     page ->
                     if (page == 0) {
@@ -256,37 +276,29 @@ fun MainScreen() {
                             onDeviceClick = { detailDevice = it },
                             modifier = Modifier.fillMaxSize()
                         )
-                    } else if (page == 1) {
-                        // 订单页：订单列表瀑布流（进行中优先）
+                    } else {
+                        // 订单页：订单列表瀑布流（进行中优先），顶栏搜索框的关键词实时筛选
                         OrderScreen(
                             store = orderStore,
                             backdrop = imageBackdrop,
                             inPreview = inPreview,
+                            query = query,
                             onOrderClick = { detailOrder = it },
                             modifier = Modifier.fillMaxSize()
                         )
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // 使用 miuix 主题的标题样式与主题色，深色模式下自动适配
-                            Text(
-                                text = pageTexts[page],
-                                style = MiuixTheme.textStyles.title1,
-                                color = MiuixTheme.colorScheme.onBackground
-                            )
-                        }
                     }
                 }
             }
 
-            // 顶部悬浮层：左侧标题胶囊、右侧搜索按钮。
-            // 点搜索后长条从按钮左侧往左展开，标题胶囊同步收缩成一个圆球
+            // 顶部悬浮层：设备页 = 标题 + 设置按钮；订单页 = 标题 + 搜索按钮，
+            // 点搜索后长条从按钮左侧往左展开，标题胶囊同步收缩成一个圆球。
+            // 设备页弹窗（新增/地图编辑）的遮罩在页面层内、画在顶栏之下，
+            // 弹窗打开时顶栏仍浮在最上层，用 blockClicks 冻结其点击
             BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
+                    .blockClicks(deviceDialogOpen)
                     .statusBarsPadding()
                     .padding(top = 10.dp)
                     .padding(horizontal = 20.dp)
@@ -341,8 +353,7 @@ fun MainScreen() {
                                     ),
                                     cursorBrush = SolidColor(MiuixTheme.colorScheme.primary),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                    // 键盘上的"搜索"键：先只收起面板，真正的搜索逻辑待接入
-                                    keyboardActions = KeyboardActions(onSearch = { searching = false }),
+                                    // 输入即实时筛选订单列表，键盘上的“搜索”键无需额外动作
                                     modifier = Modifier
                                         .weight(1f)
                                         .focusRequester(focusRequester),
@@ -423,23 +434,32 @@ fun MainScreen() {
                     }
                 }
 
-                // 搜索按钮：统一玻璃材质 + 按压反馈（与右下角添加键同一套模板 GlassButton）
+                // 顶栏右侧按钮：统一玻璃材质 + 按压反馈（GlassButton）。
+                // 设备页 = 设置入口（打开设置页）；
+                // 订单页 = 搜索开关，展开中变对勾关闭图标
                 GlassButton(
                     backdrop = contentBackdrop,
                     onClick = {
-                        searching = !searching
+                        when (selectedIndex) {
+                            0 -> settingsOpen = true
+                            1 -> searching = !searching
+                        }
                     },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .size(actionSize)
                 ) {
                     Image(
-                        imageVector = if (searching) {
-                            MiuixIcons.Regular.Close
-                        } else {
-                            MiuixIcons.Regular.Search
+                        imageVector = when {
+                            selectedIndex == 0 -> MiuixIcons.Regular.Settings
+                            searching -> MiuixIcons.Regular.Close
+                            else -> MiuixIcons.Regular.Search
                         },
-                        contentDescription = if (searching) "关闭搜索" else "搜索",
+                        contentDescription = when {
+                            selectedIndex == 0 -> "设置"
+                            searching -> "关闭搜索"
+                            else -> "搜索"
+                        },
                         modifier = Modifier.size(28.dp),
                         colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
                     )
@@ -447,11 +467,13 @@ fun MainScreen() {
             }
         }
 
-        // 底部悬浮层：左边是收缩后的玻璃底栏，右边是独立的玻璃加号按钮
+        // 底部悬浮层：左边是收缩后的玻璃底栏，右边是独立的玻璃加号按钮；
+        // 与顶栏同理，设备页弹窗打开时冻结点击（遮罩在它之下盖不住它）
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
+                .blockClicks(deviceDialogOpen)
                 // 避开系统手势导航条
                 .navigationBarsPadding()
                 // iOS 悬浮风格：左右留白、离底边抬高一点
@@ -581,13 +603,28 @@ fun MainScreen() {
                 }
             )
         }
+
+        // 设置页浮层：设备页顶栏齿轮打开；整屏自绘背景图遮住主页面，
+        // 位于 imageBackdrop 层之外采样，不会自采样导致崩溃
+        if (settingsOpen) {
+            SettingsScreen(
+                backdrop = imageBackdrop,
+                inPreview = inPreview,
+                onBack = { settingsOpen = false },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
 
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
 fun MainScreenPreview() {
-    HCtoolTheme {
-        MainScreen()
+    // 预览也要 provide 一份 AppSettings，否则 HCtoolTheme / 背景读 LocalAppSettings 会报错
+    val settings = rememberAppSettings()
+    CompositionLocalProvider(LocalAppSettings provides settings) {
+        HCtoolTheme {
+            MainScreen()
+        }
     }
 }

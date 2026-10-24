@@ -27,7 +27,36 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
+import com.example.hctool.ui.theme.isInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+
+/**
+ * 弹窗打开时冻结整块区域的点击：在 Initial pass（父先于子分发）把指针事件全部消费，
+ * 子级 clickable 永远拿不到未消费的按下，整块区域等效不可交互。
+ * 用于顶栏 / 底栏这类绘制在弹窗遮罩之上的悬浮层：
+ * 弹窗存在时它们虽然被遮罩盖住但仍可点，挂上这个修饰符即可屏蔽。
+ *
+ * @param blocked 为 true 时拦截并消费所有触摸；false 时不做任何事
+ */
+fun Modifier.blockClicks(blocked: Boolean): Modifier = then(
+    if (blocked) {
+        Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial).consume()
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                } while (event.changes.any { it.pressed })
+            }
+        }
+    } else {
+        Modifier
+    }
+)
 
 /**
  * 全局统一的液态玻璃材质（以右下角添加键 GlassFab 为模板）。
@@ -70,43 +99,58 @@ fun Modifier.glassSurface(
 /** 磨砂玻璃的表面叠色：一层较深的遮罩，保证白色文字在亮背景上也清晰 */
 val FrostedTint = Color.Black.copy(alpha = 0.45f)
 
+/** 浅色模式下的磨砂叠色：换成较实的白色遮罩，保证深色文字同样清晰 */
+val LightFrostedTint = Color.White.copy(alpha = 0.62f)
+
 /**
- * 磨砂玻璃材质：比 [glassSurface] 模糊更强、并叠一层深色遮罩，
- * 用于内容卡片/弹窗等需要高可读性的容器（顶栏/底栏仍用通透的 [glassSurface]）。
+ * 磨砂玻璃材质：比 [glassSurface] 模糊更强、并叠一层遮罩，
+ * 用于内容卡片 / 弹窗等需要高可读性的容器（顶栏 / 底栏仍用通透的 [glassSurface]）。
+ * 默认叠色按当前明暗自适应：深色用黑遮罩、浅色用白遮罩，保证文字始终可读。
  */
+@Composable
 fun Modifier.frostedSurface(
     backdrop: Backdrop,
     shape: Shape = RoundedCornerShape(28.dp),
     inPreview: Boolean = false,
-    surfaceTint: Color = FrostedTint,
-    previewTint: Color = Color.Black.copy(alpha = 0.5f),
-): Modifier = this.then(
-    if (inPreview) {
-        Modifier.background(color = previewTint, shape = shape)
-    } else {
-        Modifier.drawBackdrop(
-            backdrop = backdrop,
-            shape = { shape },
-            effects = {
-                vibrancy()
-                // 强模糊：把背后内容磨成雾面，突出前景文字
-                blur(40.dp.toPx())
-                lens(8.dp.toPx(), 16.dp.toPx())
-            },
-            highlight = { Highlight.Default },
-            shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) },
-            onDrawSurface = { drawRect(surfaceTint) }
-        )
-    }
-)
+    surfaceTint: Color? = null,
+    previewTint: Color? = null,
+): Modifier {
+    val dark = isInDarkTheme()
+    val tint = surfaceTint ?: if (dark) FrostedTint else LightFrostedTint
+    val preview = previewTint ?: if (dark) Color.Black.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.7f)
+    return this.then(
+        if (inPreview) {
+            Modifier.background(color = preview, shape = shape)
+        } else {
+            Modifier.drawBackdrop(
+                backdrop = backdrop,
+                shape = { shape },
+                effects = {
+                    vibrancy()
+                    // 强模糊：把背后内容磨成雾面，突出前景文字
+                    blur(40.dp.toPx())
+                    lens(8.dp.toPx(), 16.dp.toPx())
+                },
+                highlight = { Highlight.Default },
+                shadow = { Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.2f)) },
+                onDrawSurface = { drawRect(tint) }
+            )
+        }
+    )
+}
 
 /** 弹窗专用叠色：比卡片更实的深色，压住背后亮壁纸的透光，让弹窗读起来是一整块实体 */
 val DialogTint = Color.Black.copy(alpha = 0.62f)
 
+/** 浅色模式下的弹窗叠色 */
+val LightDialogTint = Color.White.copy(alpha = 0.8f)
+
 /**
- * 弹窗专用表面：更实的深色磨砂 + 一圈亮边高光。
- * 亮边给弹窗一道清晰的轮廓光，配合更深的遮罩让弹窗从背景中跳出来（更突出）。
+ * 弹窗专用表面：更实的磨砂 + 一圈亮边高光。
+ * 亮边给弹窗一道清晰的轮廓光，配合遮罩让弹窗从背景中跳出来（更突出）。
+ * 叠色与描边都按当前明暗自适应。
  */
+@Composable
 fun Modifier.dialogSurface(
     backdrop: Backdrop,
     inPreview: Boolean = false,
@@ -116,12 +160,12 @@ fun Modifier.dialogSurface(
         backdrop = backdrop,
         shape = shape,
         inPreview = inPreview,
-        surfaceTint = DialogTint,
-        previewTint = Color.Black.copy(alpha = 0.72f)
+        surfaceTint = if (isInDarkTheme()) DialogTint else LightDialogTint,
+        previewTint = if (isInDarkTheme()) Color.Black.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.88f)
     )
     .border(
         width = 1.2.dp,
-        color = Color.White.copy(alpha = 0.30f),
+        color = if (isInDarkTheme()) Color.White.copy(alpha = 0.30f) else Color.Black.copy(alpha = 0.12f),
         shape = shape
     )
 
