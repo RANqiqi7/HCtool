@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 可对外授权的路径：设备备注图片的临时拍照文件放在 cacheDir/device_images -->
+<!-- FileProvider 可对外授权的路径：备注图片统一放 filesDir/device_images，
+     相机拍照需要先拿到一个可写入的内容 Uri，故把该目录授权出去 -->
 <paths>
-    <cache-path
+    <files-path
         name="device_images"
         path="device_images/" />
 </paths>

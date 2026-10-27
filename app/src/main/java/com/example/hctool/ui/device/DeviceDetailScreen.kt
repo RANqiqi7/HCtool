@@ -1,6 +1,10 @@
 package com.example.hctool.ui.device
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -43,12 +48,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.hctool.R
 import com.example.hctool.ui.components.glassSurface
 import com.example.hctool.ui.components.AppBackgroundImage
+import com.example.hctool.ui.data.ImageStore
 import com.example.hctool.ui.order.OrderStatus
 import com.example.hctool.ui.order.OrderStore
 import com.example.hctool.ui.order.status
@@ -61,8 +69,11 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Edit
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Photos
+import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -82,7 +93,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * @param backdrop  玻璃采样源（用 imageBackdrop，只采背景图）
  * @param inPreview 预览态退化玻璃为纯色
  * @param onBack       返回（滑出动画结束后回调）
- * @param onEdit       编辑按钮点击（具体编辑逻辑待接入）
  * @param onOrderClick 点关联订单里的某一条（上抛订单号，由 MainActivity 打开对应订单详情页）
  */
 @Composable
@@ -93,15 +103,68 @@ fun DeviceDetailScreen(
     backdrop: Backdrop,
     inPreview: Boolean,
     onBack: () -> Unit,
-    onEdit: () -> Unit,
     onOrderClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 入场：挂载后翻转 shown，页面从右侧滑入；返回时先滑出、动画结束再真正移除
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
+
+    // 按 id 取活数据：编辑保存后本页与列表、地图色块一起刷新
+    val current = store.devices.firstOrNull { it.id == device.id } ?: device
+
+    // 编辑模式：本页自己持有，不需要上抛。只允许改基础信息里的设备型号，
+    // 以及更多信息里的设备编号与照片；改动先进草稿，点对号才写回 store
+    var editing by remember { mutableStateOf(false) }
+    var modelDraft by remember { mutableStateOf("") }
+    var numberDraft by remember { mutableStateOf("") }
+    var imageDraft by remember { mutableStateOf<String?>(null) }
+
+    // 相册 / 相机：与新增设备弹窗同一套落地逻辑
+    // （选择器给的一次性临时授权必须当场拷成永久副本，否则重启就读不出来）
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            imageDraft = ImageStore.persistPicked(context, uri) ?: uri.toString()
+        }
+    }
+    var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) pendingPhotoUri?.let { imageDraft = it.toString() }
+    }
+
+    fun launchCamera() {
+        val uri = ImageStore.newCameraTarget(context)
+        pendingPhotoUri = uri
+        runCatching { cameraLauncher.launch(uri) }
+    }
+    fun pickFromGallery() {
+        galleryLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+
+    fun enterEdit() {
+        modelDraft = current.model
+        numberDraft = current.number
+        imageDraft = current.imageUri
+        editing = true
+    }
+    fun saveEdit() {
+        store.updateDevice(current.id, modelDraft.trim(), numberDraft.trim(), imageDraft)
+        editing = false
+    }
+    // 取消编辑：连草稿一起丢弃，不写回 store
+    fun cancelEdit() {
+        editing = false
+    }
+
     fun requestBack() {
         if (closing) return
         closing = true
@@ -111,8 +174,8 @@ fun DeviceDetailScreen(
             onBack()
         }
     }
-    // 系统返回键等同点返回按钮
-    BackHandler { requestBack() }
+    // 系统返回键：编辑态先退出编辑，否则等同点返回按钮
+    BackHandler { if (editing) cancelEdit() else requestBack() }
 
     // 详情内容采样层：记录下方卡片，供悬浮顶栏玻璃采样（顶栏在该层之外，不会自采样）
     val detailContentBackdrop = rememberLayerBackdrop { drawContent() }
@@ -142,6 +205,9 @@ fun DeviceDetailScreen(
 
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            // 编辑态弹输入法时取两者较大值作为底部留白，
+            // 既不重复叠加导航栏高度，也能把被键盘挡住的内容滚出来
+            val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -150,39 +216,49 @@ fun DeviceDetailScreen(
                     // 首屏让开悬浮顶栏（状态栏 + 12 + 顶栏高 56 + 间距 16）；
                     // 滚动区铺满全屏，上滑时卡片可穿过顶栏下方，贯通无裁剪横线
                     .padding(top = statusTop + 12.dp + 56.dp + 16.dp)
-                    .padding(bottom = navBottom + 24.dp)
+                    .padding(bottom = maxOf(navBottom, imeBottom) + 24.dp)
                     .padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 BasicInfoCard(
-                    device = device,
+                    device = current,
                     orderStore = orderStore,
                     backdrop = backdrop,
-                    inPreview = inPreview
+                    inPreview = inPreview,
+                    editing = editing,
+                    model = modelDraft,
+                    onModelChange = { modelDraft = it }
                 )
                 AssociatedOrdersCard(
-                    device = device,
+                    device = current,
                     orderStore = orderStore,
                     backdrop = backdrop,
                     inPreview = inPreview,
                     onOrderClick = onOrderClick
                 )
                 MoreInfoCard(
-                    device = device,
+                    device = current,
                     store = store,
                     orderStore = orderStore,
                     backdrop = backdrop,
-                    inPreview = inPreview
+                    inPreview = inPreview,
+                    editing = editing,
+                    number = numberDraft,
+                    onNumberChange = { numberDraft = it },
+                    imageUri = if (editing) imageDraft else current.imageUri,
+                    onCamera = { launchCamera() },
+                    onGallery = { pickFromGallery() }
                 )
             }
             // 悬浮顶栏浮在滚动内容之上：返回 + 标题胶囊(设备名+编号+状态圆点) + 编辑
             DetailTopBar(
-                device = device,
+                device = current,
                 orderStore = orderStore,
                 backdrop = combinedBackdrop,
                 inPreview = inPreview,
-                onBack = { requestBack() },
-                onEdit = onEdit,
+                editing = editing,
+                onLeftClick = { if (editing) cancelEdit() else requestBack() },
+                onRightClick = { if (editing) saveEdit() else enterEdit() },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
@@ -196,6 +272,7 @@ fun DeviceDetailScreen(
 /**
  * 详情页悬浮顶栏：左返回、右编辑（玻璃图标按钮，自带按压缩放），
  * 中间是悬浮标题胶囊——与主页面顶部标题胶囊同款玻璃材质，内显设备名 + 居右状态圆点。
+ * 编辑态下两个按钮换语义：左＝叉（取消编辑、丢弃草稿），右＝对号（保存写回 store）。
  * 整条顶栏固定不随内容滚动。
  */
 @Composable
@@ -204,8 +281,9 @@ private fun DetailTopBar(
     orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
-    onBack: () -> Unit,
-    onEdit: () -> Unit,
+    editing: Boolean,
+    onLeftClick: () -> Unit,
+    onRightClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -215,9 +293,9 @@ private fun DetailTopBar(
     ) {
         GlassIconButton(
             backdrop = backdrop,
-            icon = MiuixIcons.Regular.Back,
-            contentDescription = "返回",
-            onClick = onBack,
+            icon = if (editing) MiuixIcons.Regular.Close else MiuixIcons.Regular.Back,
+            contentDescription = if (editing) "取消编辑" else "返回",
+            onClick = onLeftClick,
             size = 56.dp
         )
         // 悬浮标题胶囊：设备名居左 + 状态圆点居右（glassSurface 通透玻璃，非磨砂卡片）
@@ -258,9 +336,9 @@ private fun DetailTopBar(
         }
         GlassIconButton(
             backdrop = backdrop,
-            icon = MiuixIcons.Regular.Edit,
-            contentDescription = "编辑",
-            onClick = onEdit,
+            icon = if (editing) MiuixIcons.Regular.Ok else MiuixIcons.Regular.Edit,
+            contentDescription = if (editing) "保存" else "编辑",
+            onClick = onRightClick,
             size = 56.dp
         )
     }
@@ -271,6 +349,7 @@ private fun DetailTopBar(
  * 上次运行时间不读静态字段，实时取最近一个关联订单测试节点的结束时间
  * （computeLastRunTime，订单不在库时回退设备侧存储值）；
  * 设备照片已移到「更多信息」卡片里。
+ * 编辑态下只有「设备型号」换成输入框，其余三项是运行结果，不允许改。
  */
 @Composable
 private fun BasicInfoCard(
@@ -278,6 +357,9 @@ private fun BasicInfoCard(
     orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    editing: Boolean,
+    model: String,
+    onModelChange: (String) -> Unit,
 ) {
     // 基础信息不做展开：常驻磨砂卡片，无箭头、不可点击
     StaticCard(backdrop = backdrop, inPreview = inPreview) {
@@ -290,7 +372,11 @@ private fun BasicInfoCard(
         )
         Spacer(modifier = Modifier.height(12.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            InfoRow("设备型号", device.model.ifBlank { "—" })
+            if (editing) {
+                EditRow("设备型号", model, onModelChange)
+            } else {
+                InfoRow("设备型号", device.model.ifBlank { "—" })
+            }
             InfoRow("待完成表单", "${device.pendingFormCount} 份")
             InfoRow("在测样品批数", "${device.testingSampleBatches} 批")
             InfoRow("上次运行时间", device.computeLastRunTime(orderStore).ifBlank { "—" })
@@ -433,6 +519,7 @@ private fun OrderEntryRow(entry: OrderEntry, onOrderClick: (String) -> Unit) {
 /**
  * 更多信息卡片：设备编号 / 所属地图 / 运行状态，下方展示设备照片（已从基础信息卡片移到这里）；
  * 无照片时用占位框。
+ * 编辑态下「设备编号」换成输入框，照片下方多一排拍照 / 相册按钮（所属地图与运行状态不允许改）。
  */
 @Composable
 private fun MoreInfoCard(
@@ -441,11 +528,18 @@ private fun MoreInfoCard(
     orderStore: OrderStore,
     backdrop: Backdrop,
     inPreview: Boolean,
+    editing: Boolean,
+    number: String,
+    onNumberChange: (String) -> Unit,
+    imageUri: String?,
+    onCamera: () -> Unit,
+    onGallery: () -> Unit,
 ) {
     val map = store.maps.firstOrNull { it.id == device.mapId }
     val mapName = map?.name ?: "—"
     val statusText = if (device.computeStatus(orderStore) == DeviceStatus.IN_USE) "使用中" else "空闲"
-    val bitmap = rememberImageBitmap(device.imageUri)
+    // 编辑态预览的是草稿，选完图当场就能看到效果，不点保存不会写回
+    val bitmap = rememberImageBitmap(imageUri)
     DetailCard(
         backdrop = backdrop,
         inPreview = inPreview,
@@ -454,7 +548,16 @@ private fun MoreInfoCard(
         collapsible = false
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            InfoRow("设备编号", device.number.ifBlank { "—" })
+            if (editing) {
+                EditRow(
+                    "设备编号",
+                    number,
+                    onNumberChange,
+                    keyboardType = KeyboardType.Ascii
+                )
+            } else {
+                InfoRow("设备编号", device.number.ifBlank { "—" })
+            }
             InfoRow("所属地图", mapName)
             InfoRow("运行状态", statusText)
             // 照片整宽展示，高度随图片宽高比自适应
@@ -485,6 +588,25 @@ private fun MoreInfoCard(
                         colorFilter = ColorFilter.tint(
                             MiuixTheme.colorScheme.onSurface.copy(alpha = 0.35f)
                         )
+                    )
+                }
+            }
+            // 换照片：与新增设备弹窗同款图标（拍照 / 相册）
+            if (editing) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = MiuixIcons.Regular.Scan,
+                        contentDescription = "拍照",
+                        onClick = onCamera,
+                        frosted = true
+                    )
+                    GlassIconButton(
+                        backdrop = backdrop,
+                        icon = MiuixIcons.Regular.Photos,
+                        contentDescription = "相册",
+                        onClick = onGallery,
+                        frosted = true
                     )
                 }
             }

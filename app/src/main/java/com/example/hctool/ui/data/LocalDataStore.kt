@@ -1,6 +1,7 @@
 package com.example.hctool.ui.data
 
 import android.content.Context
+import android.util.Log
 import com.example.hctool.ui.device.DeviceStore
 import com.example.hctool.ui.order.OrderStore
 import java.io.File
@@ -9,7 +10,7 @@ import kotlinx.serialization.json.Json
 /**
  * 本地数据仓库：把 [AppSnapshot] 以 JSON 落盘到 filesDir/data.json。
  *
- * - 读：文件不存在 / 解析失败一律返回 null，调用方回退预置种子（首次安装）。
+ * - 读：文件不存在 / 解析失败一律返回 null，调用方回退空数据（首次安装即空列表）。
  * - 写：先写临时文件再 rename 的原子替换，进程写到一半被杀也不会留下半截 JSON。
  * - encode 结果同时是云同步的报文正文，本地与服务器存的格式完全一致。
  */
@@ -26,7 +27,9 @@ object LocalDataStore {
 
     /** JSON 文本 → 快照；解析失败返回 null */
     fun decode(text: String): AppSnapshot? =
-        runCatching { json.decodeFromString(AppSnapshot.serializer(), text) }.getOrNull()
+        runCatching { json.decodeFromString(AppSnapshot.serializer(), text) }
+            .onFailure { Log.w("DataDecode", "快照解析失败: ${it.message}") }
+            .getOrNull()
 
     /** 从两个 store 现取一份快照（调用方负责防抖，这里只做纯搬运） */
     fun snapshotOf(deviceStore: DeviceStore, orderStore: OrderStore): AppSnapshot =

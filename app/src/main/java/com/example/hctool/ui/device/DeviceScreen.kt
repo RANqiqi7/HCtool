@@ -49,6 +49,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -177,10 +178,12 @@ fun DeviceScreen(
                 addMode = addMode,
                 activeFilter = activeFilter,
                 onEdit = { editOpen = true },
-                onCellClick = { cell ->
-                    // 添加模式下点空格子 → 弹添加框；格子上已有设备则不响应
-                    if (addMode && store.deviceAt(map.id, cell) == null) {
-                        addDialogCell = cell
+                onCellClick = { cell, device ->
+                    when {
+                        // 点设备色块：直接进设备详情，与点列表卡片是同一个入口
+                        device != null -> onDeviceClick(device)
+                        // 添加模式下点空格子 → 弹添加框
+                        addMode -> addDialogCell = cell
                     }
                 }
             )
@@ -290,7 +293,7 @@ fun DeviceScreen(
                             number = number,
                             model = model,
                             imageUri = imageUri,
-                            mapId = map.id,
+                            mapId = map?.id ?: "",
                             cell = cell
                         )
                     )
@@ -312,7 +315,7 @@ private fun DeviceMapCard(
     addMode: Boolean,
     activeFilter: FilterTag?,
     onEdit: () -> Unit,
-    onCellClick: (Int) -> Unit,
+    onCellClick: (Int, Device?) -> Unit,
 ) {
     val map = store.selectedMap
     Box(
@@ -359,19 +362,23 @@ private fun DeviceMapCard(
                     )
                 }
             }
-            // 当前地图名 + 规格，方便区分多张地图
-            Text(
-                text = "${map.name} · ${map.rows}×${map.cols}",
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-            )
-            MapPager(
-                store = store,
-                orderStore = orderStore,
-                addMode = addMode,
-                activeFilter = activeFilter,
-                onCellClick = onCellClick
-            )
+            // 当前地图名 + 规格，方便区分多张地图；一张地图都没有时给空态提示
+            if (map != null) {
+                Text(
+                    text = "${map.name} · ${map.rows}×${map.cols}",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                )
+                MapPager(
+                    store = store,
+                    orderStore = orderStore,
+                    addMode = addMode,
+                    activeFilter = activeFilter,
+                    onCellClick = onCellClick
+                )
+            } else {
+                EmptyHint("还没有地图，点右上角编辑按钮新建一张地图")
+            }
         }
     }
 }
@@ -387,7 +394,7 @@ private fun MapPager(
     orderStore: OrderStore,
     addMode: Boolean,
     activeFilter: FilterTag?,
-    onCellClick: (Int) -> Unit,
+    onCellClick: (Int, Device?) -> Unit,
 ) {
     val maps = store.maps
     val size = maps.size
@@ -421,9 +428,9 @@ private fun MapPager(
             val cell = (maxWidth - spacing * (m.cols - 1f)) / m.cols.toFloat()
             return cell * m.rows.toFloat() + spacing * (m.rows - 1f)
         }
-        // 不同规格地图切换后平滑收缩/拉长，避免外框突然跳变
+        // 不同规格地图切换后平滑收缩/拉长，避免外框突然跳变；无地图时不渲染网格
         val gridHeight by animateDpAsState(
-            targetValue = heightOf(store.selectedMap),
+            targetValue = store.selectedMap?.let { heightOf(it) } ?: 0.dp,
             animationSpec = tween(durationMillis = 240),
             label = "gridHeight"
         )
@@ -459,7 +466,7 @@ private fun GridMap(
     orderStore: OrderStore,
     addMode: Boolean,
     activeFilter: FilterTag?,
-    onCellClick: (Int) -> Unit,
+    onCellClick: (Int, Device?) -> Unit,
     height: Dp,
 ) {
     val spacing = 6.dp
@@ -482,13 +489,15 @@ private fun GridMap(
                             .weight(1f)
                             .height(cellHeight),
                         device = device,
+                        // 色块底色 ＝ 运行状态色，与列表卡片那个圆点完全同源
+                        blockColor = device?.statusColor(orderStore) ?: StatusIdleColor,
                         // 添加模式下所有空格子都亮加号
                         armed = addMode && device == null,
                         // 选中筛选标签时：不匹配的设备色块降透明度，突出筛选结果
                         dimmed = device != null &&
                             activeFilter != null &&
                             !matchFilter(activeFilter, device, store, orderStore),
-                        onClick = { onCellClick(cell) }
+                        onClick = { onCellClick(cell, device) }
                     )
                 }
             }
@@ -498,8 +507,9 @@ private fun GridMap(
 
 /**
  * 单个网格格子：
- * - 有设备 → 绿色圆角色块，内部双行：第一行设备名称、第二行设备序号
- * - 待添加（已点过一次）→ 显示加号
+ * - 有设备 → 圆角色块，底色就是运行状态色（空闲绿 / 使用中蓝），与列表卡片的状态圆点同色；
+ *   内部设备名称占满上部空间（可换行，实在放不下才省略号），序号贴底边
+ * - 待添加（添加模式下的空格子）→ 显示加号
  * - 空 → 淡淡的底色
  * - dimmed（筛选不匹配）→ 色块与文字降透明度，突出筛选出的设备
  */
@@ -507,6 +517,7 @@ private fun GridMap(
 private fun GridCell(
     modifier: Modifier = Modifier,
     device: Device?,
+    blockColor: Color,
     armed: Boolean,
     dimmed: Boolean = false,
     onClick: () -> Unit,
@@ -517,11 +528,7 @@ private fun GridCell(
             .clip(shape)
             .background(
                 when {
-                    device != null -> if (dimmed) {
-                        DeviceBlockColor.copy(alpha = 0.3f)
-                    } else {
-                        DeviceBlockColor
-                    }
+                    device != null -> if (dimmed) blockColor.copy(alpha = 0.3f) else blockColor
                     armed -> MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)
                     // 空格子底色稍明显一点，保证点阵网格清晰可见
                     else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.10f)
@@ -531,36 +538,42 @@ private fun GridCell(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
+            )
     ) {
         when {
             device != null -> Column(
-                modifier = Modifier.padding(2.dp),
+                // 整格撑满：名称那一行吃掉序号以外的全部高度并顶部对齐，序号自然贴底
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 3.dp, vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = device.nickname,
-                    style = MiuixTheme.textStyles.body2,
+                    // 换行后按居中对齐排版，两行名字看起来才对称
+                    style = MiuixTheme.textStyles.body2.copy(textAlign = TextAlign.Center),
                     color = Color.White.copy(alpha = if (dimmed) 0.5f else 1f),
                     fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
-                // 第二行序号：与设备列表卡片同一套正则提取规则
+                // 底边那一行序号：与设备列表卡片同一套正则提取规则
                 Text(
                     text = extractSequence(device.number)?.let { "序号 $it" } ?: "未编号",
-                    style = MiuixTheme.textStyles.body2,
+                    style = MiuixTheme.textStyles.body2.copy(textAlign = TextAlign.Center),
                     color = Color.White.copy(alpha = if (dimmed) 0.4f else 0.75f),
                     fontSize = 9.sp,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             armed -> Image(
                 imageVector = MiuixIcons.Regular.Add,
                 contentDescription = "添加设备",
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(20.dp),
                 colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.primary)
             )
         }

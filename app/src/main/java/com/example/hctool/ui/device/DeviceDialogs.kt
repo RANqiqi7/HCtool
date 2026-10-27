@@ -56,8 +56,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.example.hctool.ui.components.dialogSurface
+import com.example.hctool.ui.data.ImageStore
 import com.kyant.backdrop.Backdrop
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -68,7 +68,6 @@ import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -96,19 +95,24 @@ fun AddDeviceDialog(
     onConfirm: (nickname: String, number: String, model: String, imageUri: String?) -> Unit,
 ) {
     val context = LocalContext.current
+    // 关闭动画与选图落地都要用，声明提前以便下面的 launcher 回调复用
+    val scope = rememberCoroutineScope()
     var nickname by remember { mutableStateOf("") }
     var number by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var imageUri by remember { mutableStateOf<String?>(null) }
 
-    // 相册：系统图片选择器，无需存储权限
+    // 相册：系统图片选择器，无需存储权限；
+    // 选择器给的 Uri 是一次性临时授权，必须当场拷成自家永久副本，否则重启就读不出来
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri != null) imageUri = uri.toString()
+        if (uri != null) scope.launch {
+            imageUri = ImageStore.persistPicked(context, uri) ?: uri.toString()
+        }
     }
 
-    // 相机：拍照写入本应用 FileProvider 提供的 Uri
+    // 相机：拍照直接落在永久目录，再经 FileProvider 授权给相机 App 写入
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -117,13 +121,7 @@ fun AddDeviceDialog(
     }
 
     fun launchCamera() {
-        val dir = File(context.cacheDir, "device_images").apply { mkdirs() }
-        val file = File(dir, "photo_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
+        val uri = ImageStore.newCameraTarget(context)
         pendingPhotoUri = uri
         runCatching { cameraLauncher.launch(uri) }
     }
@@ -144,7 +142,6 @@ fun AddDeviceDialog(
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
     // 关闭：先把面板收回屏幕底部外、遮罩淡出，动画结束后再真正移除
-    val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
     fun requestClose() {
         if (closing) return

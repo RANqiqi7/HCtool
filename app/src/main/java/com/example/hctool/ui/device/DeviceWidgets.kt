@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import com.example.hctool.ui.components.GlassButton
 import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.data.ImageStore
 import com.example.hctool.ui.order.OrderStore
 import com.kyant.backdrop.Backdrop
 import java.io.File
@@ -397,6 +398,38 @@ fun InfoRow(label: String, value: String) {
     }
 }
 
+/**
+ * 详情页编辑态的一行「标签 + 输入框」：与非编辑态的 [InfoRow] 同一套布局，
+ * 只是把取值换成圆角输入栏（复用 [DeviceField]），切换模式时卡片不会左右跳动。
+ */
+@Composable
+fun EditRow(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    keyboardType: KeyboardType = KeyboardType.Text,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        DeviceField(
+            hint = "未填写",
+            value = value,
+            onValueChange = onValueChange,
+            keyboardType = keyboardType,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
 /** 详情页卡片内分隔线 */
 @Composable
 fun CardDivider() {
@@ -566,7 +599,7 @@ private fun decodeSyncedPhotoFile(
     maxDimension: Int,
 ): ImageBitmap? {
     val name = runCatching { Uri.parse(uriString).lastPathSegment }.getOrNull() ?: return null
-    val file = File(context.filesDir, "device_images/$name")
+    val file = File(context.filesDir, "${ImageStore.DIR}/$name")
     if (!file.isFile) return null
     return decodeWithSampling({ file.inputStream() }, maxDimension)
 }

@@ -8,6 +8,13 @@
     <!-- 云同步：访问平板 Termux 上的同步服务器 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 测试到期提醒：Android 13+ 发通知需运行时申请 POST_NOTIFICATIONS -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 预计结束当天 9:00 精确到分钟的单次提醒（属闹钟类场景，用 SCHEDULE_EXACT_ALARM） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 开机后重排提醒闹钟（国产 ROM 可能限制自启，失效时打开 App 也会重排） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- 拍照（ACTION_IMAGE_CAPTURE）在 Android 11+ 需要声明 intent 可见性 -->
     <queries>
         <intent>
@@ -49,6 +56,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 测试到期提醒：闹钟到点与开机重排都经这个接收器回到 TestReminders 重算补发 -->
+        <receiver
+            android:name="com.example.hctool.ui.order.TestReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.hctool.ACTION_TEST_DUE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -114,6 +114,8 @@ fun List<OrderForm>.filledFraction(): Float =
  * @param submitTime    提单时间（保存时由后端记录，精确到年月日时分，格式 yyyy-MM-dd HH:mm）
  * @param nodes         流程节点（详情页「完成进度」卡片按顺序展示，默认 IQC / 测试 / OQC）
  * @param forms         表单（详情页「表单进度」卡片展示，默认 使用记录表 / runcard）
+ * @param testHours     开始测试时填写的预计测试时长（单位小时，整数字符串）；
+ *                      测试节点进行中时据此算「预计结束时间」，完成后换算成「X天Y小时」记入基础信息
  */
 @Serializable
 data class Order(
@@ -129,6 +131,7 @@ data class Order(
     val submitTime: String = "",
     val nodes: List<OrderNode> = defaultOrderNodes(),
     val forms: List<OrderForm> = defaultOrderForms(),
+    val testHours: String = "",
 )
 
 /**
@@ -143,137 +146,45 @@ val Order.status: OrderStatus
         OrderStatus.IN_PROGRESS
     }
 
-/** 预置数据移到了顶层函数，不能直接访问伴生对象，提供同源的 id 生成别名 */
-private fun presetNewId(): String = OrderStore.newId()
-
-/** 预置演示订单：覆盖两种状态（仅首次启动用，之后以磁盘数据为准）；列表展示时进行中优先 */
-fun defaultPresetOrders(): List<Order> = listOf(
-        Order(
-            presetNewId(), "DD-241023", "华测检测",
-            sampleName = "饮用水样", sampleCount = "12", sampleNo = "P2410-E",
-            testCondition = "常温常湿", caseOwner = "张三",
-            submitTime = "2026-10-23 10:02",
-            // IQC 已完成、测试进行中、OQC 未开始 → 节点 33%
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-23 10:20", "2026-10-23 15:40"),
-                OrderNode("测试", "2026-10-24 09:05"),
-                OrderNode("OQC"),
-            ),
-            // 使用记录表已填、runcard 未填 → 表单 50%
-            forms = listOf(
-                OrderForm("使用记录表", "2026-10-23 16:02"),
-                OrderForm("runcard"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241022", "谱尼测试",
-            sampleName = "土壤样", sampleCount = "6", sampleNo = "P2410-C",
-            testCondition = "低温冷藏", caseOwner = "李四",
-            submitTime = "2026-10-22 09:40",
-            // 仅 IQC 进行中
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-22 11:00"),
-                OrderNode("测试"),
-                OrderNode("OQC"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241021", "华测检测",
-            sampleName = "空气样", sampleCount = "8", sampleNo = "P2410-A",
-            testCondition = "常温常湿", caseOwner = "张三",
-            submitTime = "2026-10-21 14:15",
-            // IQC 已开始：设备关联订单的「开始时间」定向到这里的 IQC 开始时间
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-21 09:00"),
-                OrderNode("测试"),
-                OrderNode("OQC"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241020", "谱尼测试",
-            sampleName = "环境样", sampleCount = "5", sampleNo = "P2410-D",
-            testCondition = "常温常湿", caseOwner = "李四",
-            submitTime = "2026-10-20 08:50",
-            // 测试进行中：一厅音箱因此判定为使用中
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-20 09:20", "2026-10-20 13:00"),
-                OrderNode("测试", "2026-10-20 14:00"),
-                OrderNode("OQC"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241019", "sgs 通标",
-            sampleName = "试剂样", sampleCount = "9", sampleNo = "P2410-F",
-            testCondition = "低温冷藏", caseOwner = "王五",
-            submitTime = "2026-10-19 10:10",
-            // IQC 进行中
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-19 11:00"),
-                OrderNode("测试"),
-                OrderNode("OQC"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241018", "sgs 通标",
-            sampleName = "食品样", sampleCount = "20", sampleNo = "P2410-B",
-            testCondition = "恒温 40℃", caseOwner = "王五",
-            submitTime = "2026-10-18 08:30",
-            // 节点与表单都 100% → 推导为已完结，进度环走绿色
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-18 09:00", "2026-10-18 12:30"),
-                OrderNode("测试", "2026-10-18 13:10", "2026-10-19 16:45"),
-                OrderNode("OQC", "2026-10-20 08:20", "2026-10-20 10:05"),
-            ),
-            forms = listOf(
-                OrderForm("使用记录表", "2026-10-20 10:30"),
-                OrderForm("runcard", "2026-10-20 11:00"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-241013", "谱尼测试",
-            sampleName = "水质样", sampleCount = "10", sampleNo = "P2410-D",
-            testCondition = "常温常湿", caseOwner = "李四",
-            submitTime = "2026-10-13 16:20",
-            // 节点与表单都 100% → 已完结
-            nodes = listOf(
-                OrderNode("IQC", "2026-10-13 17:00", "2026-10-14 09:30"),
-                OrderNode("测试", "2026-10-14 10:00", "2026-10-15 18:20"),
-                OrderNode("OQC", "2026-10-16 08:40", "2026-10-16 11:15"),
-            ),
-            forms = listOf(
-                OrderForm("使用记录表", "2026-10-16 11:40"),
-                OrderForm("runcard", "2026-10-16 12:05"),
-            )
-        ),
-        Order(
-            presetNewId(), "DD-240930", "华测检测",
-            sampleName = "油品样", sampleCount = "4", sampleNo = "P2409-X",
-            testCondition = "高温 60℃", caseOwner = "赵六",
-            submitTime = "2026-09-30 11:05",
-            // 节点与表单都 100% → 已完结
-            nodes = listOf(
-                OrderNode("IQC", "2026-09-30 11:30", "2026-09-30 15:00"),
-                OrderNode("测试", "2026-10-01 09:00", "2026-10-02 17:30"),
-                OrderNode("OQC", "2026-10-03 08:20", "2026-10-03 10:00"),
-            ),
-            forms = listOf(
-                OrderForm("使用记录表", "2026-10-03 10:30"),
-                OrderForm("runcard", "2026-10-03 11:00"),
-            )
-        ),
-)
-
 /**
  * 订单页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
  * 用 Compose 可观察集合，任何增删改都会自动触发界面刷新。
  */
-class OrderStore(initialOrders: List<Order> = defaultPresetOrders()) {
+class OrderStore(initialOrders: List<Order> = emptyList()) {
     /** 订单列表；列表展示时进行中优先 */
     val orders = mutableStateListOf<Order>().apply { addAll(initialOrders) }
 
     /** 新增一个订单 */
     fun addOrder(order: Order) {
         orders.add(order)
+    }
+
+    /**
+     * 写回订单详情页编辑模式下的基础信息（六个文本字段 + 图片），
+     * 订单号、提单时间、节点与表单状态等其余字段一律原样保留。
+     */
+    fun updateBasicInfo(
+        id: String,
+        customer: String,
+        sampleName: String,
+        sampleCount: String,
+        sampleNo: String,
+        testCondition: String,
+        caseOwner: String,
+        imageUri: String?,
+    ) {
+        val index = orders.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            orders[index] = orders[index].copy(
+                customer = customer,
+                sampleName = sampleName,
+                sampleCount = sampleCount,
+                sampleNo = sampleNo,
+                testCondition = testCondition,
+                caseOwner = caseOwner,
+                imageUri = imageUri,
+            )
+        }
     }
 
     /**
@@ -302,6 +213,22 @@ class OrderStore(initialOrders: List<Order> = defaultPresetOrders()) {
             }
         }
         orders[orderIndex] = order.copy(nodes = nodes)
+    }
+
+    /**
+     * 启动「测试」节点：记下开始测试弹窗里填写的预计测试小时数，并给测试节点打开始时间。
+     * 只有测试节点尚未开始（开始时间为空）时才写入开始时间，避免重复启动覆盖真实时间。
+     */
+    fun startTest(orderId: String, hours: String) {
+        val orderIndex = orders.indexOfFirst { it.id == orderId }
+        if (orderIndex < 0) return
+        val order = orders[orderIndex]
+        val nodes = order.nodes.toMutableList()
+        val index = nodes.indexOfFirst { it.name == "测试" }
+        if (index in nodes.indices && nodes[index].startTime.isBlank()) {
+            nodes[index] = nodes[index].copy(startTime = currentNodeTime())
+        }
+        orders[orderIndex] = order.copy(nodes = nodes, testHours = hours.trim())
     }
 
     /**
@@ -364,3 +291,32 @@ fun currentSubmitTime(): String = timeStamp()
 
 /** 生成节点的开始 / 结束时间（与提单时间同一格式） */
 fun currentNodeTime(): String = timeStamp()
+
+/**
+ * 把开始测试时填写的预计小时数换算成「X天Y小时」：25→「1天1小时」、24→「1天」、
+ * 3→「3小时」。非法（非正整数）返回空串，基础信息里对应行自然隐藏。
+ */
+fun formatTestDuration(hours: String): String {
+    val h = hours.trim().toIntOrNull() ?: return ""
+    if (h <= 0) return ""
+    val days = h / 24
+    val rem = h % 24
+    return when {
+        days > 0 && rem > 0 -> "${days}天${rem}小时"
+        days > 0 -> "${days}天"
+        else -> "${rem}小时"
+    }
+}
+
+/**
+ * 预计结束时间 = 节点开始时间 + 预计测试小时数；任一非法返回空串。
+ * 与节点时间同一 yyyy-MM-dd HH:mm 格式，供测试进行中的节点行展示。
+ */
+fun expectedEndTime(startTime: String, hours: String): String {
+    val h = hours.trim().toIntOrNull() ?: return ""
+    if (h <= 0) return ""
+    if (startTime.isBlank()) return ""
+    val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    val start = runCatching { fmt.parse(startTime) }.getOrNull() ?: return ""
+    return fmt.format(Date(start.time + h * 3600_000L))
+}

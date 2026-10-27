@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.example.hctool.ui.data.AppSnapshot
+import com.example.hctool.ui.data.ImageStore
 import com.example.hctool.ui.data.LocalDataStore
 import com.example.hctool.ui.data.toDeviceSeed
 import com.example.hctool.ui.device.DeviceStore
@@ -194,7 +195,7 @@ class SyncManager(
         val names = photoNames(snapshot)
         if (names.isEmpty()) return
         val remote = runCatching { client.listPhotos().toSet() }.getOrNull() ?: return
-        val imagesDir = File(appContext.filesDir, "device_images").apply { mkdirs() }
+        val imagesDir = File(appContext.filesDir, ImageStore.DIR).apply { mkdirs() }
         for (name in names) {
             val local = localPhotoFile(name)
             if (local == null) {
@@ -212,9 +213,9 @@ class SyncManager(
 
     /** 照片文件先找 filesDir（下载来的），再找 cacheDir（拍照生成的原始位置） */
     private fun localPhotoFile(name: String): File? {
-        val inFiles = File(appContext.filesDir, "device_images/$name")
+        val inFiles = File(appContext.filesDir, "${ImageStore.DIR}/$name")
         if (inFiles.isFile) return inFiles
-        val inCache = File(appContext.cacheDir, "device_images/$name")
+        val inCache = File(appContext.cacheDir, "${ImageStore.DIR}/$name")
         return if (inCache.isFile) inCache else null
     }
 

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -51,18 +53,23 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.example.hctool.ui.components.dialogSurface
+import com.example.hctool.ui.data.ImageStore
 import com.example.hctool.ui.device.DeviceField
+import com.example.hctool.ui.device.CardDivider
+import com.example.hctool.ui.device.Device
+import com.example.hctool.ui.device.EmptyHint
 import com.example.hctool.ui.device.GlassIconButton
+import com.example.hctool.ui.device.extractSequence
+import com.example.hctool.ui.device.pressable
 import com.example.hctool.ui.device.rememberImageBitmap
 import com.kyant.backdrop.Backdrop
-import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -101,6 +108,8 @@ fun AddOrderDialog(
     ) -> Unit,
 ) {
     val context = LocalContext.current
+    // 关闭动画与选图落地都要用，声明提前以便下面的 launcher 回调复用
+    val scope = rememberCoroutineScope()
     var orderNo by remember { mutableStateOf("") }
     var customer by remember { mutableStateOf("") }
     var sampleName by remember { mutableStateOf("") }
@@ -110,14 +119,17 @@ fun AddOrderDialog(
     var caseOwner by remember { mutableStateOf("") }
     var imageUri by remember { mutableStateOf<String?>(null) }
 
-    // 相册：系统图片选择器，无需存储权限
+    // 相册：系统图片选择器，无需存储权限；
+    // 选择器给的 Uri 是一次性临时授权，必须当场拷成自家永久副本，否则重启就读不出来
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri != null) imageUri = uri.toString()
+        if (uri != null) scope.launch {
+            imageUri = ImageStore.persistPicked(context, uri) ?: uri.toString()
+        }
     }
 
-    // 相机：拍照写入本应用 FileProvider 提供的 Uri
+    // 相机：拍照直接落在永久目录，再经 FileProvider 授权给相机 App 写入
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -126,13 +138,7 @@ fun AddOrderDialog(
     }
 
     fun launchCamera() {
-        val dir = File(context.cacheDir, "device_images").apply { mkdirs() }
-        val file = File(dir, "photo_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
+        val uri = ImageStore.newCameraTarget(context)
         pendingPhotoUri = uri
         runCatching { cameraLauncher.launch(uri) }
     }
@@ -154,7 +160,6 @@ fun AddOrderDialog(
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
     // 关闭：先把面板收回屏幕底部外、遮罩淡出，动画结束后再真正移除
-    val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
     fun requestClose() {
         if (closing) return
@@ -335,6 +340,233 @@ fun AddOrderDialog(
                 DeviceField(hint = "测试条件", value = testCondition, onValueChange = { testCondition = it })
                 DeviceField(hint = "Case Owner", value = caseOwner, onValueChange = { caseOwner = it })
             }
+        }
+    }
+}
+
+/**
+ * 开始测试弹窗（磨砂玻璃）：样式 / 弹出效果 / 输入法避让 / 内容伸长逻辑与新增订单弹窗完全一致。
+ *
+ * 从测试节点「未开始 → 进行中」时弹出。结构（自上而下）：
+ * - 头部：中间标题「开始测试」，右侧叉（取消、不启动）；
+ * - 顶部：填写预计测试时间（单位小时，必填）；
+ * - 接着：搜索栏，按设备昵称 / 编号实时过滤下方列表；
+ * - 下面：设备列表，点一台即把它绑定到本订单的关联设备、启动测试节点并关闭弹窗。
+ * 未填合法小时数时，设备行淡显、点了不生效（启动前必须能算出预计结束时间）。
+ *
+ * @param devices  可选设备列表（通常为全部设备）
+ * @param orderNo  本订单号：用于标记哪台已关联
+ * @param onConfirm 回调：选中的设备 + 填写的测试小时数
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun StartTestDialog(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    devices: List<Device>,
+    orderNo: String,
+    onDismiss: () -> Unit,
+    onConfirm: (device: Device, hours: String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var hours by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    // 测试时间必填：只有填了正整数小时才允许选设备启动（与预计结束时间可算同源）
+    val canStart = (hours.trim().toIntOrNull() ?: 0) > 0
+    val keyword = query.trim()
+    val filtered = devices.filter {
+        keyword.isEmpty() ||
+            it.nickname.contains(keyword, ignoreCase = true) ||
+            it.number.contains(keyword, ignoreCase = true)
+    }
+
+    // 上下留白与新增订单弹窗保持同一套基准
+    val gap = 16.dp
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+    val topLimit = statusTop + 81.dp + gap
+
+    // 入场：挂载后翻转 shown，面板从屏幕底部外平滑弹入、遮罩同步淡入
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    // 关闭：先把面板收回屏幕底部外、遮罩淡出，动画结束后再真正移除
+    var closing by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (closing) return
+        closing = true
+        shown = false
+        scope.launch {
+            delay(300)
+            onDismiss()
+        }
+    }
+    // 系统返回键：关闭且不启动
+    BackHandler { requestClose() }
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "startTestScrim"
+    )
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(OrderDialogScrim.copy(alpha = OrderDialogScrim.alpha * scrimAlpha))
+            // 点击弹框外任意处：关闭且不启动
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { requestClose() },
+        contentAlignment = Alignment.TopCenter
+    ) {
+        val screenH = maxHeight
+        val idleLimit = screenH - navBottom - 84.dp - gap
+        val imeLimit = screenH - imeBottom - gap
+        val bottomLimit = minOf(idleLimit, imeLimit)
+        val maxDialogHeight = (bottomLimit - topLimit).coerceAtLeast(120.dp)
+        val enter by animateDpAsState(
+            targetValue = if (shown) 0.dp else screenH,
+            animationSpec = tween(durationMillis = 280),
+            label = "startTestEnter"
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                // 顶边钉在顶栏下沿：内容增多时只向下拉长，不向上顶
+                .offset(y = topLimit + enter)
+                .heightIn(max = maxDialogHeight)
+                .animateContentSize()
+                .dialogSurface(
+                    backdrop = backdrop,
+                    inPreview = inPreview
+                )
+                .padding(18.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { },
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // 头部固定：不随内容滚动
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(OrderDialogHeaderHeight)
+            ) {
+                Text(
+                    text = "开始测试",
+                    style = MiuixTheme.textStyles.title3,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                // 右侧：叉（取消、不启动）
+                GlassIconButton(
+                    backdrop = backdrop,
+                    icon = MiuixIcons.Regular.Close,
+                    contentDescription = "取消",
+                    onClick = { requestClose() },
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    frosted = true
+                )
+            }
+
+            // 内容区：单独上下滚动，头部保持固定
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // 顶部：预计测试时间（小时，必填）
+                DeviceField(
+                    hint = "测试时间（小时）",
+                    value = hours,
+                    onValueChange = { hours = it },
+                    keyboardType = KeyboardType.Number
+                )
+                // 接着：搜索栏
+                DeviceField(
+                    hint = "搜索设备",
+                    value = query,
+                    onValueChange = { query = it }
+                )
+                // 下面：设备列表，点一台即绑定并启动
+                if (filtered.isEmpty()) {
+                    EmptyHint("没有匹配的设备")
+                } else {
+                    filtered.forEachIndexed { index, device ->
+                        if (index > 0) {
+                            CardDivider()
+                        }
+                        TestDeviceRow(
+                            device = device,
+                            orderNo = orderNo,
+                            enabled = canStart,
+                            onClick = { if (canStart) onConfirm(device, hours.trim()) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 开始测试弹窗里的一行设备：昵称 + 序号两行，已关联本订单的尾部标一个「已关联」。
+ * 未填合法小时数（[enabled] 为 false）时整行淡显、不可选。
+ */
+@Composable
+private fun TestDeviceRow(
+    device: Device,
+    orderNo: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val onSurface = MiuixTheme.colorScheme.onSurface
+    val associated = device.currentOrders.any { it.orderNo == orderNo } ||
+        device.historyOrders.any { it.orderNo == orderNo }
+    val alpha = if (enabled) 1f else 0.4f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = device.nickname,
+                style = MiuixTheme.textStyles.body1,
+                color = onSurface.copy(alpha = onSurface.alpha * alpha),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = extractSequence(device.number)?.let { "序号 $it" } ?: "未编号",
+                style = MiuixTheme.textStyles.body2,
+                color = onSurface.copy(alpha = 0.6f * alpha),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (associated) {
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "已关联",
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.primary,
+                maxLines = 1
+            )
         }
     }
 }

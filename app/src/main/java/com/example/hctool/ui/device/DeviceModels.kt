@@ -13,7 +13,7 @@ import kotlinx.serialization.Serializable
 import java.util.UUID
 
 /**
- * 设备运行状态：决定列表卡片里状态圆点的颜色。
+ * 设备运行状态：决定列表卡片里状态圆点与地图色块的颜色。
  * 空闲 = 绿色，使用中 = 蓝色。
  */
 enum class DeviceStatus {
@@ -21,12 +21,16 @@ enum class DeviceStatus {
     IN_USE,
 }
 
-/** 状态圆点颜色：空闲绿、使用中蓝 */
+/** 运行状态色，全站唯一一套：状态圆点、地图色块都取这两个值 */
 val StatusIdleColor = Color(0xFF34C759)
 val StatusInUseColor = Color(0xFF0A84FF)
 
-/** 网格里设备色块的默认填充色（简易圆角色块，默认绿色） */
-val DeviceBlockColor = Color(0xFF34C759)
+/**
+ * 设备当前该用的颜色：走 [computeStatus] 同一套推导，
+ * 保证地图色块与列表卡片的状态圆点永远同色。
+ */
+fun Device.statusColor(orderStore: OrderStore): Color =
+    if (computeStatus(orderStore) == DeviceStatus.IN_USE) StatusInUseColor else StatusIdleColor
 
 /**
  * 设备正在测试 / 历史测过的一条关联订单（对应「关联订单列表」里的一根长条）。
@@ -158,150 +162,8 @@ data class DeviceSeed(
     val selectedMapId: String,
 )
 
-/** 预置演示数据：三张地图 + 一批设备，覆盖两种状态与多张地图（仅首次启动用，之后以磁盘数据为准） */
-fun defaultDeviceSeed(): DeviceSeed {
-    // 局部别名：预置数据里的 newId() 改指向伴生对象，保持写法不变
-    fun newId() = DeviceStore.newId()
-    val mainMap = DeviceMap(id = DeviceStore.newId(), name = "主地图", rows = 4, cols = 4)
-    val hallMap = DeviceMap(id = DeviceStore.newId(), name = "一厅", rows = 3, cols = 5)
-    val labMap = DeviceMap(id = DeviceStore.newId(), name = "实验室", rows = 5, cols = 6)
-    return DeviceSeed(
-        maps = listOf(mainMap, hallMap, labMap),
-        selectedMapId = mainMap.id,
-        devices = listOf(
-        Device(
-            newId(), "采集盒 A", "SB01", "HC-100",
-            mapId = mainMap.id, cell = 0,
-            pendingFormCount = 0, completedFormCount = 18, totalFormCount = 18,
-            testingSampleBatches = 0, lastRunTime = "2026-10-20 16:42",
-            historyOrders = listOf(
-                DeviceOrder("DD-240913", "P2409-A", "2026-09-13", "2026-09-20"),
-                DeviceOrder("DD-240827", "P2408-B", "2026-08-27", "2026-09-03"),
-                DeviceOrder("DD-240715", "P2407-C", "2026-07-15", "2026-07-22"),
-                DeviceOrder("DD-240603", "P2406-D", "2026-06-03", "2026-06-10")
-            )
-        ),
-        Device(
-            newId(), "采集盒 B", "SB02", "HC-100",
-            mapId = mainMap.id, cell = 5,
-            pendingFormCount = 3, completedFormCount = 12, totalFormCount = 15,
-            testingSampleBatches = 2, lastRunTime = "2026-10-23 09:15",
-            currentOrders = listOf(
-                DeviceOrder("DD-241021", "P2410-A", "2026-10-21", "2026-10-28"),
-                DeviceOrder("DD-241018", "P2410-B", "2026-10-18", "2026-10-30")
-            ),
-            historyOrders = listOf(
-                DeviceOrder("DD-240930", "P2409-E", "2026-09-30", "2026-10-03"),
-                DeviceOrder("DD-240902", "P2409-F", "2026-09-02", "2026-09-09")
-            )
-        ),
-        Device(
-            newId(), "网关", "GW07", "HC-G2",
-            mapId = mainMap.id, cell = 6,
-            pendingFormCount = 1, completedFormCount = 7, totalFormCount = 8,
-            testingSampleBatches = 0, lastRunTime = "2026-10-19 11:03",
-            historyOrders = listOf(
-                DeviceOrder("DD-240810", "P2408-G", "2026-08-10", "2026-08-17"),
-                DeviceOrder("DD-240622", "P2406-H", "2026-06-22", "2026-06-29")
-            )
-        ),
-        Device(
-            newId(), "温控器", "DEV-12", "HC-T3",
-            mapId = mainMap.id, cell = 10,
-            pendingFormCount = 2, completedFormCount = 9, totalFormCount = 11,
-            testingSampleBatches = 1, lastRunTime = "2026-10-23 08:40",
-            currentOrders = listOf(
-                DeviceOrder("DD-241022", "P2410-C", "2026-10-22", "2026-11-02")
-            ),
-            historyOrders = listOf(
-                DeviceOrder("DD-240918", "P2409-I", "2026-09-18", "2026-09-25")
-            )
-        ),
-        Device(
-            newId(), "一厅相机", "CAM03", "HC-C1",
-            mapId = hallMap.id, cell = 2,
-            pendingFormCount = 0, completedFormCount = 5, totalFormCount = 5,
-            testingSampleBatches = 0, lastRunTime = "2026-10-15 14:20",
-            historyOrders = listOf(
-                DeviceOrder("DD-240705", "P2407-J", "2026-07-05", "2026-07-12"),
-                DeviceOrder("DD-240518", "P2405-K", "2026-05-18", "2026-05-25")
-            )
-        ),
-        Device(
-            newId(), "一厅音箱", "SPK04", "HC-S1",
-            mapId = hallMap.id, cell = 7,
-            pendingFormCount = 4, completedFormCount = 6, totalFormCount = 10,
-            testingSampleBatches = 3, lastRunTime = "2026-10-23 07:55",
-            currentOrders = listOf(
-                DeviceOrder("DD-241020", "P2410-D", "2026-10-20", "2026-10-27")
-            ),
-            historyOrders = listOf(
-                DeviceOrder("DD-240911", "P2409-L", "2026-09-11", "2026-09-18"),
-                DeviceOrder("DD-240803", "P2408-M", "2026-08-03", "2026-08-10")
-            )
-        ),
-        Device(
-            newId(), "一厅屏控", "CTL05", "HC-P1",
-            mapId = hallMap.id, cell = 11,
-            pendingFormCount = 0, completedFormCount = 3, totalFormCount = 3,
-            testingSampleBatches = 0, lastRunTime = "2026-10-11 10:08",
-            historyOrders = listOf(
-                DeviceOrder("DD-240601", "P2406-N", "2026-06-01", "2026-06-08")
-            )
-        ),
-        Device(
-            newId(), "实验台 A", "LAB01", "HC-L1",
-            mapId = labMap.id, cell = 4,
-            pendingFormCount = 5, completedFormCount = 20, totalFormCount = 25,
-            testingSampleBatches = 4, lastRunTime = "2026-10-23 10:02",
-            currentOrders = listOf(
-                DeviceOrder("DD-241023", "P2410-E", "2026-10-23", "2026-11-05"),
-                DeviceOrder("DD-241019", "P2410-F", "2026-10-19", "2026-10-31")
-            ),
-            historyOrders = listOf(
-                DeviceOrder("DD-240925", "P2409-O", "2026-09-25", "2026-10-02"),
-                DeviceOrder("DD-240907", "P2409-P", "2026-09-07", "2026-09-14"),
-                DeviceOrder("DD-240816", "P2408-Q", "2026-08-16", "2026-08-23")
-            )
-        ),
-        Device(
-            newId(), "实验台 B", "LAB02", "HC-L1",
-            mapId = labMap.id, cell = 9,
-            pendingFormCount = 2, completedFormCount = 14, totalFormCount = 16,
-            testingSampleBatches = 0, lastRunTime = "2026-10-18 17:30",
-            historyOrders = listOf(
-                DeviceOrder("DD-240909", "P2409-R", "2026-09-09", "2026-09-16"),
-                DeviceOrder("DD-240728", "P2407-S", "2026-07-28", "2026-08-04"),
-                DeviceOrder("DD-240615", "P2406-T", "2026-06-15", "2026-06-22")
-            )
-        ),
-        Device(
-            newId(), "示波器", "SCO06", "HC-O1",
-            mapId = labMap.id, cell = 17,
-            pendingFormCount = 0, completedFormCount = 22, totalFormCount = 22,
-            testingSampleBatches = 0, lastRunTime = "2026-10-17 09:48",
-            historyOrders = listOf(
-                DeviceOrder("DD-240821", "P2408-U", "2026-08-21", "2026-08-28"),
-                DeviceOrder("DD-240710", "P2407-V", "2026-07-10", "2026-07-17")
-            )
-        ),
-        Device(
-            newId(), "频谱仪", "SPA08", "HC-F1",
-            mapId = labMap.id, cell = 23,
-            pendingFormCount = 6, completedFormCount = 11, totalFormCount = 17,
-            testingSampleBatches = 2, lastRunTime = "2026-10-23 08:12",
-            currentOrders = listOf(
-                DeviceOrder("DD-241022", "P2410-G", "2026-10-22", "2026-11-01")
-            ),
-            historyOrders = listOf(
-                DeviceOrder("DD-240930", "P2409-E", "2026-09-30", "2026-10-03"),
-                DeviceOrder("DD-240914", "P2409-W", "2026-09-14", "2026-09-21"),
-                DeviceOrder("DD-240806", "P2408-X", "2026-08-06", "2026-08-13")
-            )
-        ),
-        )
-    )
-}
+/** 首次启动的空种子：预置演示数据已清除，一切以磁盘快照 / 用户新增为准 */
+fun defaultDeviceSeed(): DeviceSeed = DeviceSeed(maps = emptyList(), devices = emptyList(), selectedMapId = "")
 
 /**
  * 设备页的数据存储。提升到 pager 外层持有，避免翻页时页面被销毁导致数据丢失。
@@ -317,9 +179,9 @@ class DeviceStore(seed: DeviceSeed = defaultDeviceSeed()) {
     /** 当前选中的地图 id */
     var selectedMapId by mutableStateOf(seed.selectedMapId)
 
-    /** 当前选中的地图对象 */
-    val selectedMap: DeviceMap
-        get() = maps.firstOrNull { it.id == selectedMapId } ?: maps.first()
+    /** 当前选中的地图对象；一张地图都没有时为 null（界面需兼容空地图） */
+    val selectedMap: DeviceMap?
+        get() = maps.firstOrNull { it.id == selectedMapId } ?: maps.firstOrNull()
 
     /** 取某张地图下的全部设备 */
     fun devicesOf(mapId: String): List<Device> = devices.filter { it.mapId == mapId }
@@ -331,6 +193,38 @@ class DeviceStore(seed: DeviceSeed = defaultDeviceSeed()) {
     /** 新增一台设备 */
     fun addDevice(device: Device) {
         devices.add(device)
+    }
+
+    /**
+     * 把一台设备绑定到某订单：往该设备的当前关联订单里追加一条引用（已含该订单号则跳过，不重复加）。
+     * 开始测试弹窗里选中设备时调用；sampleBatch/startTime 只是设备侧回退值，
+     * 展示时仍优先取订单节点的 IQC 开始 / OQC 结束时间。
+     */
+    fun bindDeviceToOrder(deviceId: String, orderNo: String, sampleBatch: String, startTime: String) {
+        val index = devices.indexOfFirst { it.id == deviceId }
+        if (index < 0) return
+        val device = devices[index]
+        if (device.currentOrders.any { it.orderNo == orderNo } ||
+            device.historyOrders.any { it.orderNo == orderNo }
+        ) return
+        devices[index] = device.copy(
+            currentOrders = device.currentOrders + DeviceOrder(orderNo, sampleBatch, startTime, "")
+        )
+    }
+
+    /**
+     * 写回设备详情页编辑模式里允许改动的三个字段（型号 / 编号 / 图片），
+     * 其余字段（表单数、关联订单、所在地图与格子等）一律原样保留。
+     */
+    fun updateDevice(id: String, model: String, number: String, imageUri: String?) {
+        val index = devices.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            devices[index] = devices[index].copy(
+                model = model,
+                number = number,
+                imageUri = imageUri,
+            )
+        }
     }
 
     /** 新建一张地图并切换过去 */

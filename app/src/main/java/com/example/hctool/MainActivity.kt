@@ -1,7 +1,11 @@
 package com.example.hctool
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
@@ -55,6 +59,7 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -82,8 +87,8 @@ import com.example.hctool.ui.order.Order
 import com.example.hctool.ui.order.OrderDetailScreen
 import com.example.hctool.ui.order.OrderScreen
 import com.example.hctool.ui.order.OrderStore
+import com.example.hctool.ui.order.TestReminders
 import com.example.hctool.ui.order.currentSubmitTime
-import com.example.hctool.ui.order.defaultPresetOrders
 import com.example.hctool.ui.settings.SettingsScreen
 import com.example.hctool.ui.sync.SyncManager
 import com.example.hctool.ui.sync.rememberSyncManager
@@ -146,15 +151,15 @@ fun MainScreen() {
     // 提升到 pager 外层持有，翻页销毁重建也不丢数据
     val context = LocalContext.current
     val initialSnapshot = remember { LocalDataStore.load(context) }
-    // 设备页数据：地图 + 设备 + 选中地图，整组从种子恢复
+    // 设备页数据：地图 + 设备 + 选中地图，整组从快照恢复，无文件时为空种子
     val deviceStore = remember { DeviceStore(initialSnapshot?.toDeviceSeed() ?: defaultDeviceSeed()) }
     // 设备页是否有子级弹窗（新增设备 / 地图编辑）打开：打开时禁止主界面左右滑动切页
     var deviceDialogOpen by remember { mutableStateOf(false) }
     // 当前打开详情的设备：非空时在设备页之上滑入整屏详情页浮层
     var detailDevice by remember { mutableStateOf<Device?>(null) }
-    // 订单页数据：同样从快照恢复，无文件时用预置订单
+    // 订单页数据：同样从快照恢复，无文件时为空列表
     val orderStore = remember {
-        OrderStore(initialSnapshot?.orders?.ifEmpty { null } ?: defaultPresetOrders())
+        OrderStore(initialSnapshot?.orders ?: emptyList())
     }
     // 新增订单弹窗开关（订单页点底栏加号弹出）
     var addOrderOpen by remember { mutableStateOf(false) }
@@ -180,14 +185,29 @@ fun MainScreen() {
     }
 
     // 数据变更 → 防抖 1.5s 落盘：杀进程重启不丢数据；
-    // 编码出的 JSON 同时是云同步报文（SyncManager 复用同一份编码）
+    // 编码出的 JSON 同时是云同步报文（SyncManager 复用同一份编码）；
+    // 落盘后顺带重排测试到期提醒，保证闹钟永远跟最新数据一致
     LaunchedEffect(deviceStore, orderStore) {
         snapshotFlow {
             LocalDataStore.encode(LocalDataStore.snapshotOf(deviceStore, orderStore))
         }
             .distinctUntilChanged()
             .debounce(1500)
-            .collect { text -> LocalDataStore.saveJson(context, text) }
+            .collect { text ->
+                LocalDataStore.saveJson(context, text)
+                TestReminders.reschedule(context)
+            }
+    }
+
+    // Android 13+ 发通知需要运行时授权：首次启动申请一次，拒绝不阻塞任何功能
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     // 启动后自动拉一次（稍等落地，避开首帧重组高峰）
@@ -590,7 +610,6 @@ fun MainScreen() {
                 backdrop = imageBackdrop,
                 inPreview = inPreview,
                 onBack = { detailDevice = null },
-                onEdit = { /* 设备编辑逻辑待接入 */ },
                 // 跨模块跳转不叠浮层：关掉设备详情、把主翻页切到订单页，
                 // 保证订单详情返回时落回订单管理页
                 onOrderClick = { orderNo ->
@@ -612,7 +631,6 @@ fun MainScreen() {
                 backdrop = imageBackdrop,
                 inPreview = inPreview,
                 onBack = { detailOrder = null },
-                onEdit = { /* 订单编辑逻辑待接入 */ },
                 // 跨模块跳转不叠浮层：关掉订单详情、把主翻页切到设备页，
                 // 保证设备详情返回时落回设备管理页
                 onDeviceClick = { device ->
