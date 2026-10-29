@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.hctool.ui.components.frostedSurface
+import com.example.hctool.ui.device.DeleteConfirmDialog
 import com.example.hctool.ui.device.FilterMenu
 import com.example.hctool.ui.device.ListHeader
 import com.example.hctool.ui.device.pressable
@@ -72,6 +73,7 @@ enum class OrderFilterTag(val status: OrderStatus, val label: String) {
  * @param inPreview    预览态退化玻璃为纯色
  * @param query        顶栏搜索框的当前关键词（空串 = 不搜索）
  * @param onOrderClick 点击某张订单卡片（由 MainActivity 弹出订单详情页）
+ * @param onDialogOpenChange 长按删除确认弹窗开关上抛：弹窗存在时外层锁定左右切页与顶栏点击
  */
 @Composable
 fun OrderScreen(
@@ -81,10 +83,18 @@ fun OrderScreen(
     query: String,
     onOrderClick: (Order) -> Unit,
     modifier: Modifier = Modifier,
+    onDialogOpenChange: (Boolean) -> Unit = {},
 ) {
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val density = LocalDensity.current
+
+    // 非空表示长按了这张订单卡片，弹二次确认删除
+    var deleteTarget by remember { mutableStateOf<Order?>(null) }
+    // 删除确认弹窗打开时通知外层锁定主界面左右切页
+    androidx.compose.runtime.LaunchedEffect(deleteTarget) {
+        onDialogOpenChange(deleteTarget != null)
+    }
 
     // 筛选：null = 不筛选（显示全部订单）
     var activeFilter by remember { mutableStateOf<OrderFilterTag?>(null) }
@@ -168,7 +178,8 @@ fun OrderScreen(
                 filtered = activeFilter != null || kw.isNotEmpty(),
                 backdrop = backdrop,
                 inPreview = inPreview,
-                onOrderClick = onOrderClick
+                onOrderClick = onOrderClick,
+                onOrderLongClick = { deleteTarget = it }
             )
         }
 
@@ -224,6 +235,20 @@ fun OrderScreen(
                 }
             )
         }
+
+        // 长按订单卡片的二次确认删除
+        deleteTarget?.let { target ->
+            DeleteConfirmDialog(
+                backdrop = combinedBackdrop,
+                inPreview = inPreview,
+                message = "确定删除订单「${target.orderNo}」吗？节点与表单进度将一并移除。",
+                onConfirm = {
+                    store.removeOrder(target.id)
+                    deleteTarget = null
+                },
+                onDismiss = { deleteTarget = null }
+            )
+        }
     }
 }
 
@@ -232,6 +257,7 @@ fun OrderScreen(
  * - 主标题 = 订单号（不带状态颜色点）
  * - 副标题 = 订单状态（进行中蓝 / 已完结绿）
  * - 有图片则展示图片，无图片则不展示（与设备卡片同款图片位）
+ * - 长按触发删除确认（onOrderLongClick）
  */
 @Composable
 private fun OrderCard(
@@ -239,13 +265,17 @@ private fun OrderCard(
     backdrop: Backdrop,
     inPreview: Boolean,
     onOrderClick: (Order) -> Unit,
+    onOrderLongClick: (Order) -> Unit,
 ) {
     val bitmap = rememberImageBitmap(order.imageUri)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
-            .pressable(onClick = { onOrderClick(order) })
+            .pressable(
+                onClick = { onOrderClick(order) },
+                onLongClick = { onOrderLongClick(order) }
+            )
             .frostedSurface(
                 backdrop = backdrop,
                 shape = RoundedCornerShape(22.dp),
@@ -296,6 +326,7 @@ private fun OrderMasonry(
     backdrop: Backdrop,
     inPreview: Boolean,
     onOrderClick: (Order) -> Unit,
+    onOrderLongClick: (Order) -> Unit,
 ) {
     if (orders.isEmpty()) {
         Text(
@@ -316,13 +347,13 @@ private fun OrderMasonry(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            left.forEach { OrderCard(it, backdrop, inPreview, onOrderClick) }
+            left.forEach { OrderCard(it, backdrop, inPreview, onOrderClick, onOrderLongClick) }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            right.forEach { OrderCard(it, backdrop, inPreview, onOrderClick) }
+            right.forEach { OrderCard(it, backdrop, inPreview, onOrderClick, onOrderLongClick) }
         }
     }
 }

@@ -160,6 +160,14 @@ class OrderStore(initialOrders: List<Order> = emptyList()) {
     }
 
     /**
+     * 删除一个订单（列表卡片长按二次确认后调用）。
+     * 设备侧的关联订单引用不级联删除：订单不在库时展示回退设备侧记录（与 computeStatus / 行渲染既有设计一致）。
+     */
+    fun removeOrder(id: String) {
+        orders.removeAll { it.id == id }
+    }
+
+    /**
      * 写回订单详情页编辑模式下的基础信息（六个文本字段 + 图片），
      * 订单号、提单时间、节点与表单状态等其余字段一律原样保留。
      */

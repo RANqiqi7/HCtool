@@ -524,7 +524,10 @@ private fun BasicInfoCard(
                 } else if (fields.isEmpty()) {
                     EmptyHint("暂无基础信息")
                 } else {
-                    fields.forEach { (label, value) -> InfoRow(label, value) }
+                    // 测试条件可能很长：整段多行换行显示，不省略截断
+                    fields.forEach { (label, value) ->
+                        InfoRow(label, value, multiLine = label == "测试条件")
+                    }
                 }
             }
             if (bitmap != null) {

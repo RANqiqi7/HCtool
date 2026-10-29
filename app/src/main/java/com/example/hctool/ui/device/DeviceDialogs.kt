@@ -498,7 +498,7 @@ fun MapEditDialog(
                     label = "行数",
                     value = current.rows,
                     min = 2,
-                    max = 8,
+                    max = 11,
                     onChange = { mapsDraft[currentIndex] = current.copy(rows = it) }
                 )
                 Stepper(

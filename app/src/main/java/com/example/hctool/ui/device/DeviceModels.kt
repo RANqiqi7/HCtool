@@ -195,6 +195,11 @@ class DeviceStore(seed: DeviceSeed = defaultDeviceSeed()) {
         devices.add(device)
     }
 
+    /** 删除一台设备（列表卡片长按二次确认后调用）；格子无人占用，地图色块自然消失 */
+    fun removeDevice(id: String) {
+        devices.removeAll { it.id == id }
+    }
+
     /**
      * 把一台设备绑定到某订单：往该设备的当前关联订单里追加一条引用（已含该订单号则跳过，不重复加）。
      * 开始测试弹窗里选中设备时调用；sampleBatch/startTime 只是设备侧回退值，

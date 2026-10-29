@@ -4,7 +4,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.app.Activity
 import android.view.View
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -15,6 +17,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -75,6 +79,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import com.example.hctool.ui.components.GlassButton
+import com.example.hctool.ui.components.dialogSurface
 import com.example.hctool.ui.components.frostedSurface
 import com.example.hctool.ui.data.ImageStore
 import com.example.hctool.ui.order.OrderStore
@@ -169,13 +174,14 @@ fun DeviceCard(
     backdrop: Backdrop,
     inPreview: Boolean,
     onClick: (Device) -> Unit,
+    onLongClick: ((Device) -> Unit)? = null,
 ) {
     val bitmap = rememberImageBitmap(device.imageUri)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             // 按压反馈需在磨砂绘制之前，缩放才能带动玻璃背景一起收缩
-            .pressable(onClick = { onClick(device) })
+            .pressable(onClick = { onClick(device) }, onLongClick = onLongClick?.let { f -> { f(device) } })
             .frostedSurface(
                 backdrop = backdrop,
                 shape = RoundedCornerShape(22.dp),
@@ -226,11 +232,13 @@ fun DeviceCard(
  * 供卡片 / 标题胶囊等大尺寸可点表面复用，保证所有按钮和卡片按压手感一致。
  *
  * @param onClick      点击回调
+ * @param onLongClick  长按回调；为 null 时保持普通 clickable，不引入长按判定
  * @param pressedScale 按下缩放比例，默认 0.98（大表面用较缓和的收缩）
  */
 @Composable
 fun Modifier.pressable(
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     pressedScale: Float = 0.98f,
 ): Modifier {
     val interactionSource = remember { MutableInteractionSource() }
@@ -240,16 +248,26 @@ fun Modifier.pressable(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 900f),
         label = "pressScale"
     )
+    val clickablePart = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onLongClick = onLongClick,
+            onClick = onClick
+        )
+    } else {
+        Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick
+        )
+    }
     return this
         .graphicsLayer {
             scaleX = scale
             scaleY = scale
         }
-        .clickable(
-            interactionSource = interactionSource,
-            indication = null,
-            onClick = onClick
-        )
+        .then(clickablePart)
 }
 
 /**
@@ -286,6 +304,15 @@ fun DetailCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // 不可折叠的卡片：编辑态切换（InfoRow↔EditRow、多出按钮行）时高度平滑拉长，不突跳；
+            // 可折叠卡片已有 AnimatedVisibility 驱动高度，不再叠加避免双重动画互拉
+            .then(
+                if (!collapsible) {
+                    Modifier.animateContentSize(tween(durationMillis = 220))
+                } else {
+                    Modifier
+                }
+            )
             // 统一按压反馈（按下轻微收缩）+ 点击切换展开 / 收起
             .pressable(onClick = onToggle)
             .clip(RoundedCornerShape(24.dp))
@@ -362,6 +389,8 @@ fun StaticCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // 编辑态切换时内容高度变化平滑拉伸，卡片边框跟着平滑伸长 / 收回
+            .animateContentSize(tween(durationMillis = 220))
             .pressable(onClick = { })
             .clip(RoundedCornerShape(24.dp))
             .frostedSurface(
@@ -374,12 +403,17 @@ fun StaticCard(
     )
 }
 
-/** 详情页一行「标签 + 取值」信息：标签居左淡显，取值紧随其后，过长省略。 */
+/**
+ * 详情页一行「标签 + 取值」信息：标签居左淡显，取值紧随其后。
+ *
+ * @param multiLine 取值是否允许多行换行显示（如测试条件较长时）：
+ *                  true 时取值整段换行、标签顶对齐；false（默认）单行、过长省略。
+ */
 @Composable
-fun InfoRow(label: String, value: String) {
+fun InfoRow(label: String, value: String, multiLine: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = if (multiLine) Alignment.Top else Alignment.CenterVertically
     ) {
         Text(
             text = label,
@@ -391,8 +425,8 @@ fun InfoRow(label: String, value: String) {
             text = value,
             style = MiuixTheme.textStyles.body1,
             color = MiuixTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = if (multiLine) Int.MAX_VALUE else 1,
+            overflow = if (multiLine) TextOverflow.Visible else TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
     }
@@ -449,6 +483,119 @@ fun EmptyHint(text: String) {
         style = MiuixTheme.textStyles.body2,
         color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f)
     )
+}
+
+/** 删除专用警示色：与地图编辑弹窗的「删除当前地图」图标同色 */
+private val DeleteWarnColor = Color(0xFFFF453A)
+
+/**
+ * 长按删除的二次确认弹窗（设备 / 订单列表共用）：
+ * 居中磨砂弹层，遮罩淡入 + 卡片微缩放入场；点弹框外或系统返回键取消，
+ * 「删除」为警示红，点击后由调用方执行删除并负责关闭（onConfirm 里清目标）。
+ *
+ * @param message 确认文案，由调用方拼入被删对象的名字 / 编号
+ */
+@Composable
+fun DeleteConfirmDialog(
+    backdrop: Backdrop,
+    inPreview: Boolean,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // 入场：挂载后翻转 shown，遮罩淡入、卡片从 0.88 微缩弹到原大
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "deleteScrim"
+    )
+    val cardScale by animateFloatAsState(
+        targetValue = if (shown) 1f else 0.88f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 900f),
+        label = "deleteCardScale"
+    )
+    // 系统返回键 = 取消删除，不能泄到 Activity 把应用退掉
+    BackHandler { onDismiss() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.55f * scrimAlpha))
+            // 点弹框外任意处取消
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 48.dp)
+                .graphicsLayer {
+                    scaleX = cardScale
+                    scaleY = cardScale
+                    alpha = scrimAlpha
+                }
+                .dialogSurface(backdrop = backdrop, inPreview = inPreview)
+                .padding(22.dp)
+                // 消费弹框内部点击，避免冒泡到遮罩误触关闭
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "确认删除",
+                style = MiuixTheme.textStyles.title3,
+                color = MiuixTheme.colorScheme.onSurface
+            )
+            Text(
+                text = message,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                GlassButton(
+                    backdrop = backdrop,
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    frosted = true
+                ) {
+                    Text(
+                        text = "取消",
+                        style = MiuixTheme.textStyles.body1,
+                        color = MiuixTheme.colorScheme.onSurface
+                    )
+                }
+                GlassButton(
+                    backdrop = backdrop,
+                    onClick = onConfirm,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    frosted = true
+                ) {
+                    Text(
+                        text = "删除",
+                        style = MiuixTheme.textStyles.body1,
+                        color = DeleteWarnColor
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**

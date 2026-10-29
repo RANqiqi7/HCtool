@@ -155,6 +155,8 @@ fun MainScreen() {
     val deviceStore = remember { DeviceStore(initialSnapshot?.toDeviceSeed() ?: defaultDeviceSeed()) }
     // 设备页是否有子级弹窗（新增设备 / 地图编辑）打开：打开时禁止主界面左右滑动切页
     var deviceDialogOpen by remember { mutableStateOf(false) }
+    // 订单页是否有子级弹窗（长按删除确认）打开：同样锁定切页与顶栏/底栏点击
+    var orderDialogOpen by remember { mutableStateOf(false) }
     // 当前打开详情的设备：非空时在设备页之上滑入整屏详情页浮层
     var detailDevice by remember { mutableStateOf<Device?>(null) }
     // 订单页数据：同样从快照恢复，无文件时为空列表
@@ -326,8 +328,8 @@ fun MainScreen() {
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
                     // 子级弹窗 / 设备详情页 / 订单详情页 / 新增订单弹窗 / 设置页打开时锁定左右切换
-                    userScrollEnabled = !deviceDialogOpen && detailDevice == null &&
-                        detailOrder == null && !addOrderOpen && !settingsOpen
+                    userScrollEnabled = !deviceDialogOpen && !orderDialogOpen &&
+                        detailDevice == null && detailOrder == null && !addOrderOpen && !settingsOpen
                 ) {
                     page ->
                     if (page == 0) {
@@ -350,6 +352,7 @@ fun MainScreen() {
                             inPreview = inPreview,
                             query = query,
                             onOrderClick = { detailOrder = it },
+                            onDialogOpenChange = { orderDialogOpen = it },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -360,11 +363,12 @@ fun MainScreen() {
             // 点搜索后长条从按钮左侧往左展开，标题胶囊同步收缩成一个圆球。
             // 设备页弹窗（新增/地图编辑）的遮罩在页面层内、画在顶栏之下，
             // 弹窗打开时顶栏仍浮在最上层，用 blockClicks 冻结其点击
+            // （设备页与订单页的弹窗各自上报锁状态，任一打开都冻结）
             BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .blockClicks(deviceDialogOpen)
+                    .blockClicks(deviceDialogOpen || orderDialogOpen)
                     .statusBarsPadding()
                     .padding(top = 10.dp)
                     .padding(horizontal = 20.dp)
@@ -539,7 +543,7 @@ fun MainScreen() {
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .blockClicks(deviceDialogOpen)
+                .blockClicks(deviceDialogOpen || orderDialogOpen)
                 // 避开系统手势导航条
                 .navigationBarsPadding()
                 // iOS 悬浮风格：左右留白、离底边抬高一点

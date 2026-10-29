@@ -95,6 +95,8 @@ fun DeviceScreen(
     var addDialogCell by remember { mutableStateOf<Int?>(null) }
     // 地图编辑弹框开关
     var editOpen by remember { mutableStateOf(false) }
+    // 非空表示长按了这张设备卡片，弹二次确认删除
+    var deleteTarget by remember { mutableStateOf<Device?>(null) }
     // 筛选：null = 不筛选（显示全部地图的全部设备）
     var activeFilter by remember { mutableStateOf<FilterTag?>(null) }
     // 筛选下拉列表开关
@@ -120,8 +122,8 @@ fun DeviceScreen(
     }
 
     // 任一子级弹窗打开时通知外层锁定主界面左右切页
-    LaunchedEffect(editOpen, addDialogCell) {
-        onDialogOpenChange(editOpen || addDialogCell != null)
+    LaunchedEffect(editOpen, addDialogCell, deleteTarget) {
+        onDialogOpenChange(editOpen || addDialogCell != null || deleteTarget != null)
     }
 
     val map = store.selectedMap
@@ -209,7 +211,8 @@ fun DeviceScreen(
                 orderStore = orderStore,
                 backdrop = backdrop,
                 inPreview = inPreview,
-                onDeviceClick = onDeviceClick
+                onDeviceClick = onDeviceClick,
+                onDeviceLongClick = { deleteTarget = it }
             )
         }
 
@@ -298,6 +301,20 @@ fun DeviceScreen(
                         )
                     )
                 }
+            )
+        }
+
+        // 长按设备卡片的二次确认删除：确认后移除设备并释放所在网格格子
+        deleteTarget?.let { target ->
+            DeleteConfirmDialog(
+                backdrop = combinedBackdrop,
+                inPreview = inPreview,
+                message = "确定删除设备「${target.nickname}」吗？删除后该设备从地图与列表中移除。",
+                onConfirm = {
+                    store.removeDevice(target.id)
+                    deleteTarget = null
+                },
+                onDismiss = { deleteTarget = null }
             )
         }
     }
@@ -423,14 +440,17 @@ private fun MapPager(
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val spacing = 6.dp
-        // 当前宽度下某张地图网格的自然高度：方格按行铺满
-        fun heightOf(m: DeviceMap): Dp {
-            val cell = (maxWidth - spacing * (m.cols - 1f)) / m.cols.toFloat()
-            return cell * m.rows.toFloat() + spacing * (m.rows - 1f)
-        }
+        // 外框高度直接由页宽推导：HorizontalPager 每页宽度 = 视口宽 = maxWidth，
+        // 格子用 aspectRatio 钉死正方形 → 边长 = (maxWidth - 间距×(列数-1)) / 列数，
+        // 于是外框高 = 边长×行数 + 间距×(行数-1)，与网格实际渲染逐像素吻合。
+        // 之前多减了 16dp 页边距、又拿不到实测修正，才把最后几行挤得重叠；
+        // 现在页宽取 maxWidth，既保证正方形、又杜绝行重叠。
         // 不同规格地图切换后平滑收缩/拉长，避免外框突然跳变；无地图时不渲染网格
         val gridHeight by animateDpAsState(
-            targetValue = store.selectedMap?.let { heightOf(it) } ?: 0.dp,
+            targetValue = store.selectedMap?.let { m ->
+                val cell = (maxWidth - spacing * (m.cols - 1f)) / m.cols.toFloat()
+                cell * m.rows.toFloat() + spacing * (m.rows - 1f)
+            } ?: 0.dp,
             animationSpec = tween(durationMillis = 240),
             label = "gridHeight"
         )
@@ -442,22 +462,22 @@ private fun MapPager(
             // 页间距：左右切换时相邻网格不贴在一起
             pageSpacing = 16.dp
         ) { page ->
+            val map = maps[page.mod(size)]
             GridMap(
-                map = maps[page.mod(size)],
+                map = map,
                 store = store,
                 orderStore = orderStore,
                 addMode = addMode,
                 activeFilter = activeFilter,
-                onCellClick = onCellClick,
-                height = gridHeight
+                onCellClick = onCellClick
             )
         }
     }
 }
 
 /**
- * 点阵网格地图：按地图行列铺满；行高由容器高度反算，
- * 收缩/拉长动画期间格子随之伸缩，停稳后恢复正方形。
+ * 点阵网格地图：按地图行列铺满；格子用 aspectRatio 钉死为正方形，
+ * 任何切换 / 伸缩动画过程中都不会被拉成长方形（外框高度由页宽反推，永远吻合）。
  */
 @Composable
 private fun GridMap(
@@ -467,13 +487,11 @@ private fun GridMap(
     addMode: Boolean,
     activeFilter: FilterTag?,
     onCellClick: (Int, Device?) -> Unit,
-    height: Dp,
 ) {
     val spacing = 6.dp
-    // 行高由容器高度反算：动画期间格子被拉伸，停稳后正好是方格
-    val cellHeight = (height - spacing * (map.rows - 1f)) / map.rows.toFloat()
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(spacing)
     ) {
         repeat(map.rows) { row ->
@@ -487,7 +505,7 @@ private fun GridMap(
                     GridCell(
                         modifier = Modifier
                             .weight(1f)
-                            .height(cellHeight),
+                            .aspectRatio(1f),
                         device = device,
                         // 色块底色 ＝ 运行状态色，与列表卡片那个圆点完全同源
                         blockColor = device?.statusColor(orderStore) ?: StatusIdleColor,
@@ -582,6 +600,7 @@ private fun GridCell(
 
 /**
  * 设备列表：两列瀑布流（左右交替分配，卡片高度因有无图片而错落）。
+ * 长按任意卡片触发删除确认（onDeviceLongClick 上抛给页面层）。
  */
 @Composable
 private fun DeviceMasonry(
@@ -590,6 +609,7 @@ private fun DeviceMasonry(
     backdrop: Backdrop,
     inPreview: Boolean,
     onDeviceClick: (Device) -> Unit,
+    onDeviceLongClick: (Device) -> Unit,
 ) {
     if (devices.isEmpty()) {
         Text(
@@ -610,13 +630,13 @@ private fun DeviceMasonry(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            left.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick) }
+            left.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick, onDeviceLongClick) }
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            right.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick) }
+            right.forEach { DeviceCard(it, orderStore, backdrop, inPreview, onDeviceClick, onDeviceLongClick) }
         }
     }
 }
